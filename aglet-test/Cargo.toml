@@ -1,0 +1,11 @@
+[package]
+name = "aglet-test"
+version = "0.1.0"
+authors = ["Carson Myers <carson@myers.se>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+color-eyre = "^0.5"
+thiserror = "^1"

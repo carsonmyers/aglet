@@ -1,8 +1,7 @@
-[package]
-name = "aglet"
-version = "0.1.0"
-authors = ["Carson Myers <carson@myers.se>"]
-edition = "2018"
+[workspace]
+members = [
+	"aglet",
+	"aglet-regex",
+	"aglet-test",
+]
 
-[dependencies]
-nom = "5.0.0"

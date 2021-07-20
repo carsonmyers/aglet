@@ -1,0 +1,19 @@
+[package]
+name = "aglet"
+version = "0.1.0"
+description = "parser generator and language building tools"
+repository = "https://github.com/carsonmyers/aglet"
+readme = "../README.md"
+license-file = "../LICENSE.md"
+keywords = ["parser", "lexer", "generator", "compiler", "language", "grammar", "lex", "yacc"]
+categories = ["parsing"]
+authors = ["Carson Myers <carson@myers.se>"]
+workspace = ".."
+edition = "2018"
+
+[lib]
+
+[dependencies]
+color-eyre = "~0.5"
+thiserror = "^1"
+bitmatch = "0.1.1"
