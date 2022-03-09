@@ -35,5 +35,7 @@ pub(crate) enum State {
     Main,
     Group,
     Class,
+    ClassName,
     Range,
+    UnicodeProperties,
 }

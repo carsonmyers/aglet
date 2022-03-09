@@ -1,5 +1,6 @@
 use aglet_text::Span;
 
+#[derive(Debug)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,
@@ -44,7 +45,11 @@ pub enum TokenKind {
     RangeDifference,
     RangeIntersection,
     UnicodeShort(char, bool),
-    UnicodeLong(String, bool),
+    UnicodeLongStart(bool),
+    UnicodeLongEnd,
+    UnicodePropName(String),
+    UnicodeEqual(bool),
+    UnicodePropValue(String),
     Digit(bool),
     Whitespace(bool),
     WordChar(bool),

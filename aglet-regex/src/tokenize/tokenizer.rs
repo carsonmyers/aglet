@@ -23,7 +23,9 @@ impl<'a> Tokenizer<'a> {
             State::Main => self.next_token_main(),
             State::Group => self.next_token_group(),
             State::Class => self.next_token_class(),
+            State::ClassName => self.next_token_class_name(),
             State::Range => self.next_token_range(),
+            State::UnicodeProperties => self.next_token_unicode_properties(),
         };
 
         self.last_token_kind = token.as_ref().ok()
@@ -99,8 +101,10 @@ impl<'a> Tokenizer<'a> {
                 self.input.token(TokenKind::RangeDifference)
             },
             Some('-') => self.input.token(TokenKind::Literal('-')),
-            Some('[') if matches!(self.input.peek(), Some(':')) =>
-                self.parse_class_name(),
+            Some('[') if matches!(self.input.peek(), Some(':')) => {
+                self.state.push(State::ClassName);
+                self.input.token(TokenKind::OpenBracket)
+            }
             Some('[') => {
                 self.state.push(State::Class);
                 self.input.token(TokenKind::OpenBracket)
@@ -125,6 +129,24 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    fn next_token_class_name(&mut self) -> Result<Token> {
+        self.input.expect(':')?;
+
+        let mut name = String::new();
+        let negated = self.input.matches('^');
+        loop {
+            match self.input.next() {
+                Some(':') => break,
+                Some(c) if c.is_ascii_alphabetic() => name.push(c),
+                Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
+                None => return Err(TokenizeError::EndOfFile),
+            }
+        }
+
+        self.state.pop();
+        self.input.token(TokenKind::ClassName(name, negated))
+    }
+
     fn next_token_range(&mut self) -> Result<Token> {
         match self.input.peek() {
             Some('}') => {
@@ -138,6 +160,47 @@ impl<'a> Tokenizer<'a> {
             },
             Some(c) => self.parse_number(),
             None => Err(TokenizeError::EndOfFile),
+        }
+    }
+
+    fn next_token_unicode_properties(&mut self) -> Result<Token> {
+        let mut item = String::new();
+
+        loop {
+            match self.input.peek() {
+                Some('=') if item.len() == 0 => {
+                    self.input.next();
+                    return self.input.token(TokenKind::UnicodeEqual(false));
+                },
+                Some('=') =>
+                    return self.input.token(TokenKind::UnicodePropName(item)),
+                Some('!') if item.len() == 0 => {
+                    self.input.next();
+                    return match self.input.peek() {
+                        Some('=') => {
+                            self.input.next();
+                            self.input.token(TokenKind::UnicodeEqual(true))
+                        },
+                        Some(c) => Err(TokenizeError::UnexpectedChar(c)),
+                        None => Err(TokenizeError::EndOfFile),
+                    }
+                }
+                Some('!') =>
+                    return self.input.token(TokenKind::UnicodePropName(item)),
+                Some('}') if item.len() == 0 => {
+                    self.input.next();
+                    self.state.pop();
+                    return self.input.token(TokenKind::UnicodeLongEnd);
+                }
+                Some('}') =>
+                    return self.input.token(TokenKind::UnicodePropValue(item)),
+                Some(c) if c.is_ascii_alphanumeric() => {
+                    self.input.next();
+                    item.push(c)
+                },
+                Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
+                None => return Err(TokenizeError::EndOfFile),
+            }
         }
     }
 
@@ -198,29 +261,16 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn parse_unicode(&mut self, negated: bool) -> Result<Token> {
-        let mut class = String::new();
-        let mut class_char = '\0';
-        let bounded = self.input.matches('{');
-
-        loop {
-            match self.input.next() {
-                Some('}') if bounded => break,
-                Some(c) => {
-                    class.push(c);
-                    class_char = c;
-                },
-                None => return Err(TokenizeError::EndOfFile),
-            }
-
-            if !bounded {
-                break;
-            }
+        if self.input.matches('{') {
+            self.state.push(State::UnicodeProperties);
+            return self.input.token(TokenKind::UnicodeLongStart(negated));
         }
 
-        if bounded {
-            self.input.token(TokenKind::UnicodeLong(class, negated))
-        } else {
-            self.input.token(TokenKind::UnicodeShort(class_char, negated))
+        match self.input.next() {
+            Some(c) if c.is_ascii_alphabetic() =>
+                self.input.token(TokenKind::UnicodeShort(c, negated)),
+            Some(c) => Err(TokenizeError::UnexpectedChar(c)),
+            None => Err(TokenizeError::EndOfFile),
         }
     }
 
@@ -496,8 +546,11 @@ mod tests {
             TokenKind::Literal('A'),
             TokenKind::Literal('0'),
             TokenKind::RangeSymmetrical,
+            TokenKind::OpenBracket,
             TokenKind::ClassName(String::from("lower"), true),
+            TokenKind::CloseBracket,
             TokenKind::RangeDifference,
+            TokenKind::OpenBracket,
             TokenKind::ClassName(String::from("alnum"), false),
         ]);
 
@@ -522,6 +575,85 @@ mod tests {
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
+        ]);
+
+        let mut tr = Tokenizer::new(r"[\]\[\--]");
+        assert_tokens(tr, vec![
+            TokenKind::OpenBracket,
+            TokenKind::Literal(']'),
+            TokenKind::Literal('['),
+            TokenKind::Literal('-'),
+            TokenKind::Literal('-'),
+            TokenKind::CloseBracket,
+        ]);
+    }
+
+    #[test]
+    fn test_range() {
+        let mut tr = Tokenizer::new(r"{1,234}{,}");
+        assert_tokens(tr, vec![
+            TokenKind::OpenBrace,
+            TokenKind::Number(1),
+            TokenKind::Comma,
+            TokenKind::Number(234),
+            TokenKind::CloseBrace,
+            TokenKind::OpenBrace,
+            TokenKind::Comma,
+            TokenKind::CloseBrace,
+        ]);
+    }
+
+    #[test]
+    fn test_unicode() {
+        let mut tr = Tokenizer::new(r"\x7F1\u4E2AE\U0000007F0");
+        assert_tokens(tr, vec![
+            TokenKind::Literal('\x7F'),
+            TokenKind::Literal('1'),
+            TokenKind::Literal('\u{4E2A}'),
+            TokenKind::Literal('E'),
+            TokenKind::Literal('\x7F'),
+            TokenKind::Literal('0'),
+        ]);
+
+        let mut tr = Tokenizer::new(r"\x{1}\x{12}\x{123}\x{1234}\x{12345}");
+        assert_tokens(tr, vec![
+            TokenKind::Literal('\x01'),
+            TokenKind::Literal('\x12'),
+            TokenKind::Literal('\u{0123}'),
+            TokenKind::Literal('\u{1234}'),
+            TokenKind::Literal('\u{012345}'),
+        ]);
+
+        let mut tr = Tokenizer::new(r"\u{1}\u{12}\u{123}\u{1234}\u{12345}");
+        assert_tokens(tr, vec![
+            TokenKind::Literal('\x01'),
+            TokenKind::Literal('\x12'),
+            TokenKind::Literal('\u{0123}'),
+            TokenKind::Literal('\u{1234}'),
+            TokenKind::Literal('\u{012345}'),
+        ]);
+
+        let mut tr = Tokenizer::new(r"\U{1}\U{12}\U{123}\U{1234}\U{12345}");
+        assert_tokens(tr, vec![
+            TokenKind::Literal('\x01'),
+            TokenKind::Literal('\x12'),
+            TokenKind::Literal('\u{0123}'),
+            TokenKind::Literal('\u{1234}'),
+            TokenKind::Literal('\u{012345}'),
+        ]);
+
+        let mut tr = Tokenizer::new(r"\pL\PN\p{Mn}\P{sc!=Greek}");
+        assert_tokens(tr, vec![
+            TokenKind::UnicodeShort('L', false),
+            TokenKind::UnicodeShort('N', true),
+            TokenKind::UnicodeLongStart(false),
+            TokenKind::UnicodePropValue(String::from("Mn")),
+            TokenKind::UnicodeLongEnd,
+            TokenKind::UnicodeLongStart(true),
+            TokenKind::UnicodePropName(String::from("sc")),
+            TokenKind::UnicodeEqual(true),
+            TokenKind::UnicodePropValue(String::from("Greek")),
+            TokenKind::UnicodeLongEnd,
         ]);
     }
 }

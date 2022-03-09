@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Clone, Copy)]
 pub struct Span {
     pub start: Position,
@@ -14,6 +16,12 @@ impl Span {
 
     pub fn from(start: Position, end: Position) -> Self {
         Span { start, end }
+    }
+}
+
+impl fmt::Debug for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}-{:?}", self.start, self.end)
     }
 }
 
@@ -48,5 +56,11 @@ impl Position {
         self.offset = other.offset;
         self.line = other.line;
         self.column = other.column;
+    }
+}
+
+impl fmt::Debug for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}[{}]", self.line, self.column, self.offset)
     }
 }
