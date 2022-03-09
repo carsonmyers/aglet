@@ -2,6 +2,7 @@
 members = [
 	"aglet",
 	"aglet-regex",
+	"aglet-text",
 	"aglet-test",
 ]
 
