@@ -8,6 +8,9 @@ pub enum TokenizeError {
     #[error("end of file")]
     EndOfFile,
 
+    #[error("unexpected end of file: {0}")]
+    UnexpectedEOF(String),
+
     #[error("unexpected `{0}`")]
     UnexpectedChar(char),
 

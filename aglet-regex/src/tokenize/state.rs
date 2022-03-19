@@ -3,7 +3,7 @@ use std::fmt;
 use crate::tokenize::error::StateError;
 
 pub(crate) struct StateStack {
-    stack: Vec<StateFlags>,
+    pub(crate) stack: Vec<StateFlags>,
 }
 
 impl StateStack {
