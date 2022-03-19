@@ -14,6 +14,13 @@ impl Span {
         }
     }
 
+    pub fn from_offsets(start: usize, end: usize) -> Self {
+        Span {
+            start: Position::from_offset(start),
+            end: Position::from_offset(end),
+        }
+    }
+
     pub fn from(start: Position, end: Position) -> Self {
         Span { start, end }
     }
@@ -38,6 +45,14 @@ impl Position {
             offset: 0,
             line: 1,
             column: 1,
+        }
+    }
+
+    pub fn from_offset(offset: usize) -> Self {
+        Position {
+            offset,
+            line: 1,
+            column: offset + 1,
         }
     }
 

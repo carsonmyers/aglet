@@ -1,7 +1,7 @@
 #![feature(result_option_inspect)]
 
 mod parse;
-mod tokenize;
+pub mod tokenize;
 
 use parse::error::TokenizeError;
 use tokenize::token::Token;

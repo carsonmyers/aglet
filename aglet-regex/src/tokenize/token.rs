@@ -57,6 +57,15 @@ pub enum TokenKind {
     ClassName(String, bool),
 }
 
+impl Token {
+    pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
+        Token {
+            kind,
+            span: Span::from_offsets(start, end),
+        }
+    }
+}
+
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("tok")
