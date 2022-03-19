@@ -34,7 +34,8 @@ pub enum TokenKind {
     CloseGroup,
     NonCapturing,
     Name(String),
-    Flags(Vec<char>),
+    Flags(Vec<char>, Vec<char>),
+    NonCapturingFlags(Vec<char>, Vec<char>),
 
     // Character classes
     OpenBracket,

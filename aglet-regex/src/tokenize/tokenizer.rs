@@ -1,3 +1,8 @@
+// TODO: distinguish expected EOF from unexpected EOF.
+// TODO: add "expected characters" or some kind of detail string to some errors
+// TODO: turn Tokenizer into an iterator (Option<Result<Token, TokenizeError>>)
+// TODO: test error cases
+
 use crate::tokenize::error::*;
 use crate::tokenize::input::*;
 use crate::tokenize::state::*;
@@ -35,6 +40,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn next_token_main(&mut self) -> Result<Token> {
+        let flags = self.state.flags();
+        if flags.ignore_space {
+            self.skip_whitespace();
+        }
+
         match self.input.next() {
             Some('^') => self.input.token(TokenKind::StartOfLine),
             Some('$') => self.input.token(TokenKind::EndOfLine),
@@ -91,6 +101,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn next_token_class(&mut self) -> Result<Token> {
+        let flags = self.state.flags();
+        if flags.ignore_space {
+            self.skip_whitespace();
+        }
+
         match self.input.next() {
             Some('-') if matches!(self.input.peek(), Some(']')) =>
                 self.input.token(TokenKind::Literal('-')),
@@ -148,6 +163,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn next_token_range(&mut self) -> Result<Token> {
+        self.skip_whitespace();
+
         match self.input.peek() {
             Some('}') => {
                 self.input.next();
@@ -158,12 +175,13 @@ impl<'a> Tokenizer<'a> {
                 self.input.next();
                 self.input.token(TokenKind::Comma)
             },
-            Some(c) => self.parse_number(),
+            Some(_) => self.parse_number(),
             None => Err(TokenizeError::EndOfFile),
         }
     }
 
     fn next_token_unicode_properties(&mut self) -> Result<Token> {
+        self.skip_whitespace();
         let mut item = String::new();
 
         loop {
@@ -201,6 +219,20 @@ impl<'a> Tokenizer<'a> {
                 Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
                 None => return Err(TokenizeError::EndOfFile),
             }
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        let mut skipping_comment = false;
+        loop {
+            match self.input.peek() {
+                Some('\n') if skipping_comment => skipping_comment = false,
+                Some(c) if c.is_whitespace() || skipping_comment => (),
+                Some('#') => skipping_comment = true,
+                _ => break,
+            }
+
+            self.input.next();
         }
     }
 
@@ -290,16 +322,34 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn parse_flags(&mut self) -> Result<Token> {
-        let mut flags = Vec::new();
+        let mut set_flags = Vec::new();
+        let mut clear_flags = Vec::new();
+        let mut clearing = false;
+        let mut non_capturing = false;
+        let mut set_ignore_whitespace = None;
+
         loop {
             match self.input.peek() {
                 Some(c) if Tokenizer::is_group_flag(&c) => {
                     self.input.next();
-                    flags.push(c);
+                    if c == 'x' {
+                        set_ignore_whitespace = Some(!clearing);
+                    }
+
+                    if clearing {
+                        clear_flags.push(c)
+                    } else {
+                        set_flags.push(c)
+                    }
                 },
                 Some(':') => {
                     self.input.next();
+                    non_capturing = true;
                     break;
+                },
+                Some('-') => {
+                    self.input.next();
+                    clearing = true;
                 }
                 Some(')') => break,
                 Some(c) => return Err(TokenizeError::UnrecognizedFlag(c)),
@@ -307,8 +357,19 @@ impl<'a> Tokenizer<'a> {
             }
         }
 
-        self.state.pop();
-        self.input.token(TokenKind::Flags(flags))
+        let result = if non_capturing {
+            self.state.swap(State::Main);
+            self.input.token(TokenKind::NonCapturingFlags(set_flags, clear_flags))
+        } else {
+            self.state.pop();
+            self.input.token(TokenKind::Flags(set_flags, clear_flags))
+        };
+
+        set_ignore_whitespace.inspect(|val| {
+            let mut flags = self.state.flags_mut();
+            flags.ignore_space = *val;
+        });
+        result
     }
 
     fn parse_class_name(&mut self) -> Result<Token> {
@@ -329,6 +390,12 @@ impl<'a> Tokenizer<'a> {
 
     fn parse_escape_sequence_class(&mut self) -> Result<Token> {
         match self.input.next() {
+            Some('s') => self.input.token(TokenKind::Whitespace(false)),
+            Some('S') => self.input.token(TokenKind::Whitespace(true)),
+            Some('d') => self.input.token(TokenKind::Digit(false)),
+            Some('D') => self.input.token(TokenKind::Digit(true)),
+            Some('w') => self.input.token(TokenKind::WordChar(false)),
+            Some('W') => self.input.token(TokenKind::WordChar(true)),
             Some(c) if Tokenizer::escapes_to_literal_class(&c) =>
                 self.input.token(TokenKind::Literal(c)),
             Some(c) => Err(TokenizeError::UnrecognizedEscape(c)),
@@ -420,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_simple_main() {
-        let mut tr = Tokenizer::new(r"a^$.?*+|)]}");
+        let tr = Tokenizer::new(r"a^$.?*+|)]}");
         assert_tokens(tr, vec![
             TokenKind::Literal('a'),
             TokenKind::StartOfLine,
@@ -438,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_escapes() {
-        let mut tr = Tokenizer::new(r"\A\z\b\B\a\f\t\n\r\v\d\D\s\S\w\W");
+        let tr = Tokenizer::new(r"\A\z\b\B\a\f\t\n\r\v\d\D\s\S\w\W");
         assert_tokens(tr, vec![
             TokenKind::StartOfText,
             TokenKind::EndOfText,
@@ -458,7 +525,7 @@ mod tests {
             TokenKind::WordChar(true),
         ]);
 
-        let mut tr = Tokenizer::new(r"\^\$\.\?\*\+\|\(\)\[\]\{\}\\");
+        let tr = Tokenizer::new(r"\^\$\.\?\*\+\|\(\)\[\]\{\}\\");
         assert_tokens(tr, vec![
             TokenKind::Literal('^'),
             TokenKind::Literal('$'),
@@ -482,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_groups() {
-        let mut tr = Tokenizer::new(r"(a)b");
+        let tr = Tokenizer::new(r"(a)b");
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
             TokenKind::Literal('a'),
@@ -490,7 +557,7 @@ mod tests {
             TokenKind::Literal('b'),
         ]);
 
-        let mut tr = Tokenizer::new(r"(?:ab)");
+        let tr = Tokenizer::new(r"(?:ab)");
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
             TokenKind::NonCapturing,
@@ -499,23 +566,23 @@ mod tests {
             TokenKind::CloseGroup,
         ]);
 
-        let mut tr = Tokenizer::new(r"(?P<name>");
+        let tr = Tokenizer::new(r"(?P<name>");
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
             TokenKind::Name(String::from("name")),
         ]);
 
-        let mut tr = Tokenizer::new(r"(?isUx)");
+        let tr = Tokenizer::new(r"(?isUx)");
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['i', 's', 'U', 'x']),
+            TokenKind::Flags(vec!['i', 's', 'U', 'x'], vec![]),
             TokenKind::CloseGroup,
         ]);
 
-        let mut tr = Tokenizer::new(r"(?mx:a)b");
+        let tr = Tokenizer::new(r"(?mx:a)b");
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['m', 'x']),
+            TokenKind::NonCapturingFlags(vec!['m', 'x'], vec![]),
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
             TokenKind::Literal('b'),
@@ -523,8 +590,70 @@ mod tests {
     }
 
     #[test]
+    fn test_flags() {
+        let tr = Tokenizer::new(r"(?is-Ux)(?-iU:)(?sx-)");
+        assert_tokens(tr, vec![
+            TokenKind::OpenGroup,
+            TokenKind::Flags(vec!['i', 's'], vec!['U', 'x']),
+            TokenKind::CloseGroup,
+            TokenKind::OpenGroup,
+            TokenKind::NonCapturingFlags(vec![], vec!['i', 'U']),
+            TokenKind::CloseGroup,
+            TokenKind::OpenGroup,
+            TokenKind::Flags(vec!['s', 'x'], vec![]),
+            TokenKind::CloseGroup,
+        ]);
+
+        let tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
+        assert_tokens(tr, vec![
+            TokenKind::Literal(' '),
+            TokenKind::Literal('a'),
+            TokenKind::Literal('\n'),
+            TokenKind::Literal('b'),
+            TokenKind::OpenGroup,
+            TokenKind::Flags(vec!['x'], vec![]),
+            TokenKind::CloseGroup,
+            TokenKind::Literal('a'),
+            TokenKind::Literal('b'),
+            TokenKind::OpenGroup,
+            TokenKind::Flags(vec![], vec!['x']),
+            TokenKind::CloseGroup,
+            TokenKind::Literal(' '),
+            TokenKind::Literal('a'),
+            TokenKind::Literal('\n'),
+            TokenKind::Literal('b'),
+        ]);
+
+        let tr = Tokenizer::new("(?x: \nz(?-x: \nx)) \ny");
+        assert_tokens(tr, vec![
+            TokenKind::OpenGroup,
+            TokenKind::NonCapturingFlags(vec!['x'], vec![]),
+            TokenKind::Literal('z'),
+            TokenKind::OpenGroup,
+            TokenKind::NonCapturingFlags(vec![], vec!['x']),
+            TokenKind::Literal(' '),
+            TokenKind::Literal('\n'),
+            TokenKind::Literal('x'),
+            TokenKind::CloseGroup,
+            TokenKind::CloseGroup,
+            TokenKind::Literal(' '),
+            TokenKind::Literal('\n'),
+            TokenKind::Literal('y'),
+        ]);
+
+        let tr = Tokenizer::new("(?x)#skip this comment\na$");
+        assert_tokens(tr, vec![
+            TokenKind::OpenGroup,
+            TokenKind::Flags(vec!['x'], vec![]),
+            TokenKind::CloseGroup,
+            TokenKind::Literal('a'),
+            TokenKind::EndOfLine,
+        ]);
+    }
+
+    #[test]
     fn test_classes() {
-        let mut tr = Tokenizer::new(r"[^-^a-z-]");
+        let tr = Tokenizer::new(r"[^-^a-z-]");
         assert_tokens(tr, vec![
             TokenKind::OpenBracket,
             TokenKind::Negated,
@@ -537,7 +666,7 @@ mod tests {
             TokenKind::CloseBracket,
         ]);
 
-        let mut tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:");
+        let tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:");
         assert_tokens(tr, vec![
             TokenKind::OpenBracket,
             TokenKind::Literal('x'),
@@ -554,7 +683,7 @@ mod tests {
             TokenKind::ClassName(String::from("alnum"), false),
         ]);
 
-        let mut tr = Tokenizer::new(r"[[^:abc:]][:abc:]]]");
+        let tr = Tokenizer::new(r"[[^:abc:]][:abc:]]]");
         assert_tokens(tr, vec![
             TokenKind::OpenBracket,
             TokenKind::OpenBracket,
@@ -577,11 +706,24 @@ mod tests {
             TokenKind::CloseBracket,
         ]);
 
-        let mut tr = Tokenizer::new(r"[\]\[\--]");
+        let tr = Tokenizer::new(r"[\^\&&~\~\]\[[\:a:]\s\W\D\--]");
         assert_tokens(tr, vec![
             TokenKind::OpenBracket,
+            TokenKind::Literal('^'),
+            TokenKind::Literal('&'),
+            TokenKind::Literal('&'),
+            TokenKind::Literal('~'),
+            TokenKind::Literal('~'),
             TokenKind::Literal(']'),
             TokenKind::Literal('['),
+            TokenKind::OpenBracket,
+            TokenKind::Literal(':'),
+            TokenKind::Literal('a'),
+            TokenKind::Literal(':'),
+            TokenKind::CloseBracket,
+            TokenKind::Whitespace(false),
+            TokenKind::WordChar(true),
+            TokenKind::Digit(true),
             TokenKind::Literal('-'),
             TokenKind::Literal('-'),
             TokenKind::CloseBracket,
@@ -590,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_range() {
-        let mut tr = Tokenizer::new(r"{1,234}{,}");
+        let tr = Tokenizer::new(r"{1,234}{,}");
         assert_tokens(tr, vec![
             TokenKind::OpenBrace,
             TokenKind::Number(1),
@@ -605,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_unicode() {
-        let mut tr = Tokenizer::new(r"\x7F1\u4E2AE\U0000007F0");
+        let tr = Tokenizer::new(r"\x7F1\u4E2AE\U0000007F0");
         assert_tokens(tr, vec![
             TokenKind::Literal('\x7F'),
             TokenKind::Literal('1'),
@@ -615,7 +757,7 @@ mod tests {
             TokenKind::Literal('0'),
         ]);
 
-        let mut tr = Tokenizer::new(r"\x{1}\x{12}\x{123}\x{1234}\x{12345}");
+        let tr = Tokenizer::new(r"\x{1}\x{12}\x{123}\x{1234}\x{12345}");
         assert_tokens(tr, vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
@@ -624,7 +766,7 @@ mod tests {
             TokenKind::Literal('\u{012345}'),
         ]);
 
-        let mut tr = Tokenizer::new(r"\u{1}\u{12}\u{123}\u{1234}\u{12345}");
+        let tr = Tokenizer::new(r"\u{1}\u{12}\u{123}\u{1234}\u{12345}");
         assert_tokens(tr, vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
@@ -633,7 +775,7 @@ mod tests {
             TokenKind::Literal('\u{012345}'),
         ]);
 
-        let mut tr = Tokenizer::new(r"\U{1}\U{12}\U{123}\U{1234}\U{12345}");
+        let tr = Tokenizer::new(r"\U{1}\U{12}\U{123}\U{1234}\U{12345}");
         assert_tokens(tr, vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
@@ -642,7 +784,7 @@ mod tests {
             TokenKind::Literal('\u{012345}'),
         ]);
 
-        let mut tr = Tokenizer::new(r"\pL\PN\p{Mn}\P{sc!=Greek}");
+        let tr = Tokenizer::new(r"\pL\PN\p{Mn}\P{sc!=Greek}");
         assert_tokens(tr, vec![
             TokenKind::UnicodeShort('L', false),
             TokenKind::UnicodeShort('N', true),
