@@ -12,6 +12,7 @@ pub struct Tokenizer<'a> {
     input: Input<'a>,
     state: StateStack,
     last_token_kind: Option<TokenKind>,
+    print_debug_info: bool,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -20,18 +21,38 @@ impl<'a> Tokenizer<'a> {
             input: Input::new(input),
             state: StateStack::new(),
             last_token_kind: None,
+            print_debug_info: false,
         }
     }
 
+    pub fn set_debug(&mut self) {
+        self.print_debug_info = true;
+    }
+
     pub fn next_token(&mut self) -> Result<Token> {
-        let token = match *self.state.get() {
-            State::Main => self.next_token_main(),
-            State::Group => self.next_token_group(),
-            State::Class => self.next_token_class(),
-            State::ClassName => self.next_token_class_name(),
-            State::Range => self.next_token_range(),
-            State::UnicodeProperties => self.next_token_unicode_properties(),
+        let token = match self.state.get() {
+            Ok(State::Main) => self.next_token_main(),
+            Ok(State::Group) => self.next_token_group(),
+            Ok(State::Class) => self.next_token_class(),
+            Ok(State::ClassName) => self.next_token_class_name(),
+            Ok(State::Range) => self.next_token_range(),
+            Ok(State::UnicodeProperties) => self.next_token_unicode_properties(),
+            Err(err) => Err(err.into()),
         };
+
+        if self.print_debug_info {
+            if let Ok(ref tok) = token {
+                println!("{:<30} {:<30} -> {:?}",
+                    format!("{:?}", &tok.span),
+                    format!("{:?}", &tok.kind),
+                    self.state);
+            } else {
+                println!("{:<30} {:<30} -> {:?}",
+                    "!!!",
+                    format!("{:?}", &token),
+                    self.state);
+            }
+        }
 
         self.last_token_kind = token.as_ref().ok()
             .map(|t| t.kind.clone());
@@ -40,7 +61,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn next_token_main(&mut self) -> Result<Token> {
-        let flags = self.state.flags();
+        let flags = self.state.flags()?;
         if flags.ignore_space {
             self.skip_whitespace();
         }
@@ -57,7 +78,10 @@ impl<'a> Tokenizer<'a> {
                 self.state.push(State::Group);
                 self.input.token(TokenKind::OpenGroup)
             },
-            Some(')') => self.input.token(TokenKind::CloseGroup),
+            Some(')') => {
+                self.state.pop();
+                self.input.token(TokenKind::CloseGroup)
+            },
             Some('[') => {
                 self.state.push(State::Class);
                 self.input.token(TokenKind::OpenBracket)
@@ -94,14 +118,14 @@ impl<'a> Tokenizer<'a> {
                 }
             },
             _ => {
-                self.state.pop();
+                self.state.swap(State::Main);
                 self.next_token_main()
             },
         }
     }
 
     fn next_token_class(&mut self) -> Result<Token> {
-        let flags = self.state.flags();
+        let flags = self.state.flags()?;
         if flags.ignore_space {
             self.skip_whitespace();
         }
@@ -358,17 +382,50 @@ impl<'a> Tokenizer<'a> {
         }
 
         let result = if non_capturing {
-            self.state.swap(State::Main);
+            // If this is just a non-capturing group with flags, then the
+            // ignore_whitespace flag shouldn't be set for the preceeding state
+            // and only the current state needs it:
+            //
+            // e.g. turning the ignore_whitespace flag on:
+            //
+            // * [Main(false), Group(false)] - start of parse_flags
+            // * [Main(false), Group(true)]  - set the flag here
+            // * [Main(false), Main(true)]   - Group is swapped with Main once
+            //                                 the group header is parsed
+            // * [Main(false)]               - original flag used once the `)`
+            //                                 token pops a state from the stack
+            if let Some(val) = set_ignore_whitespace {
+                let mut flags = self.state.flags_mut()?;
+                flags.ignore_space = val
+            }
+
             self.input.token(TokenKind::NonCapturingFlags(set_flags, clear_flags))
         } else {
-            self.state.pop();
+            // If we're setting the whitespace flag in a flag token, then the
+            // state below this one needs to get the flag. The next_main
+            // function will pop the group state, so replace it here after
+            // setting the flag:
+            //
+            // e.g. turning the ignore_whitespace flag on:
+            //
+            // * [Main(false), Group(false)] - start of parse_flags
+            // * [Main(false)]               - pop Group state
+            // * [Main(true)]                - set the flag
+            // * [Main(true), Group(true)]   - re-push the original state,
+            //                                 the flags will be copied
+            // * [Main(true), Main(true)]    - Group is swapped with Main once
+            //                                 the group header is parsed
+            // * [Main(true)]                - next_main will pop the state
+            if let Some(val) = set_ignore_whitespace {
+                let this_state = self.state.pop()?;
+                let mut flags = self.state.flags_mut()?;
+                flags.ignore_space = val;
+                self.state.push(this_state);
+            }
+
             self.input.token(TokenKind::Flags(set_flags, clear_flags))
         };
 
-        set_ignore_whitespace.inspect(|val| {
-            let mut flags = self.state.flags_mut();
-            flags.ignore_space = *val;
-        });
         result
     }
 
@@ -482,7 +539,6 @@ impl<'a> Tokenizer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::tokenize::assert_tokens;
 
     #[test]
@@ -604,7 +660,7 @@ mod tests {
             TokenKind::CloseGroup,
         ]);
 
-        let tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
+        let mut tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
         assert_tokens(tr, vec![
             TokenKind::Literal(' '),
             TokenKind::Literal('a'),
@@ -624,7 +680,8 @@ mod tests {
             TokenKind::Literal('b'),
         ]);
 
-        let tr = Tokenizer::new("(?x: \nz(?-x: \nx)) \ny");
+        let mut tr = Tokenizer::new("(?x: \nz(?-x: \ny) \nx) \nw");
+        tr.set_debug();
         assert_tokens(tr, vec![
             TokenKind::OpenGroup,
             TokenKind::NonCapturingFlags(vec!['x'], vec![]),
@@ -633,12 +690,13 @@ mod tests {
             TokenKind::NonCapturingFlags(vec![], vec!['x']),
             TokenKind::Literal(' '),
             TokenKind::Literal('\n'),
-            TokenKind::Literal('x'),
+            TokenKind::Literal('y'),
             TokenKind::CloseGroup,
+            TokenKind::Literal('x'),
             TokenKind::CloseGroup,
             TokenKind::Literal(' '),
             TokenKind::Literal('\n'),
-            TokenKind::Literal('y'),
+            TokenKind::Literal('w'),
         ]);
 
         let tr = Tokenizer::new("(?x)#skip this comment\na$");

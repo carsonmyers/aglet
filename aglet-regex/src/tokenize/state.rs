@@ -1,3 +1,7 @@
+use std::fmt;
+
+use crate::tokenize::error::StateError;
+
 pub(crate) struct StateStack {
     stack: Vec<StateFlags>,
 }
@@ -15,44 +19,59 @@ impl StateStack {
         self.stack.push(StateFlags{state, flags});
     }
 
-    pub fn swap(&mut self, state: State) {
-        let flags = self.stack.pop()
-            .map(|sf| sf.flags)
-            .expect("no state on tokenizer stack to swap with");
+    pub fn swap(&mut self, state: State) -> Result<State, StateError> {
+        let former = self.stack.pop()
+            .ok_or(StateError::NoStateOnStack)?;
+        let flags = former.flags.clone();
 
         self.stack.push(StateFlags{state, flags});
+        Ok(former.state)
     }
 
-    pub fn pop(&mut self) {
+    pub fn pop(&mut self) -> Result<State, StateError> {
         if self.stack.len() == 1 {
-            panic!("popped final state off tokenizer stack");
+            return Err(StateError::PoppedFinalState);
         }
 
-        self.stack.pop();
+        self.stack.pop()
+            .map(|sf| sf.state)
+            .ok_or(StateError::NoStateOnStack)
     }
 
-    pub fn flags(&self) -> &Flags {
+    pub fn flags(&self) -> Result<&Flags, StateError> {
         let top = self.stack.last()
-            .expect("no states on tokenizer stack");
+            .ok_or(StateError::NoStateOnStack)?;
 
-        &top.flags
+        Ok(&top.flags)
     }
 
-    pub fn flags_mut(&mut self) -> &mut Flags {
+    pub fn flags_mut(&mut self) -> Result<&mut Flags, StateError> {
         let top = self.stack.last_mut()
-            .expect("no states on tokenizer stack");
+            .ok_or(StateError::NoStateOnStack)?;
 
-        &mut top.flags
+        Ok(&mut top.flags)
     }
 
-    pub fn get(&self) -> &State {
+    pub fn get(&self) -> Result<&State, StateError> {
         self.stack.last()
             .map(|sf| &sf.state)
-            .expect("tokenizer state stack is empty")
+            .ok_or(StateError::NoStateOnStack)
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+impl fmt::Debug for StateStack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        self.stack.iter()
+            .for_each(|sf| {
+                list.entry(&sf);
+            });
+
+        list.finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum State {
     Main,
     Group,
@@ -73,8 +92,28 @@ pub(crate) struct Flags {
     pub(crate) ignore_space: bool,
 }
 
+impl fmt::Debug for Flags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        if self.ignore_space {
+            list.entry(&'x');
+        }
+
+        list.finish()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct StateFlags {
     state: State,
     flags: Flags,
+}
+
+impl fmt::Debug for StateFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("State")
+            .field(&self.state)
+            .field(&self.flags)
+            .finish()
+    }
 }

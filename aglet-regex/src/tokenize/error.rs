@@ -28,4 +28,22 @@ pub enum TokenizeError {
 
     #[error("not implemented")]
     NotImplemented,
+
+    #[error("internal state error: {0}")]
+    InternalStateError(StateError)
+}
+
+impl From<StateError> for TokenizeError {
+    fn from(err: StateError) -> Self {
+        TokenizeError::InternalStateError(err)
+    }
+}
+
+#[derive(Error, Debug, Eq, PartialEq)]
+pub enum StateError {
+    #[error("no state on tokenizer stack")]
+    NoStateOnStack,
+
+    #[error("cannot pop final state from tokenizer stack")]
+    PoppedFinalState,
 }

@@ -1,6 +1,6 @@
+use std::fmt;
 use aglet_text::Span;
 
-#[derive(Debug)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,
@@ -55,4 +55,13 @@ pub enum TokenKind {
     Whitespace(bool),
     WordChar(bool),
     ClassName(String, bool),
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("tok")
+            .field(&self.span)
+            .field(&self.kind)
+            .finish()
+    }
 }
