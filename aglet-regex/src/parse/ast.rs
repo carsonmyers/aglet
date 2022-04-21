@@ -4,15 +4,43 @@ pub struct Ast {
     pub head: Option<AstKind>,
 }
 
+impl Default for Ast {
+    fn default() -> Self { Ast { head: None } }
+}
+
 pub enum AstKind {
-    Literal { span: Span, value: char },
-    Any { span: Span },
-    Boundary { span: Span, kind: BoundaryKind },
-    Repetition { span: Span, kind: RepetitionKind },
-    Alternation { span: Span, options: Vec<Ast> },
-    Concatenation { span: Span, items: Vec<Ast> },
-    Group { span: Span, kind: GroupKind, contents: Box<Ast> },
-    Class { span: Span, kind: ClassKind },
+    Literal {
+        span:  Span,
+        value: char,
+    },
+    Any {
+        span: Span,
+    },
+    Boundary {
+        span: Span,
+        kind: BoundaryKind,
+    },
+    Repetition {
+        span: Span,
+        kind: RepetitionKind,
+    },
+    Alternation {
+        span:    Span,
+        options: Vec<Ast>,
+    },
+    Concatenation {
+        span:  Span,
+        items: Vec<Ast>,
+    },
+    Group {
+        span:     Span,
+        kind:     GroupKind,
+        contents: Box<Ast>,
+    },
+    Class {
+        span: Span,
+        kind: ClassKind,
+    },
 }
 
 pub enum BoundaryKind {
@@ -38,9 +66,19 @@ pub enum GroupKind {
 }
 
 pub enum ClassKind {
-    Posix { negated: bool, kind: PosixKind },
-    Unicode { negated: bool, name: Option<StringSpan>, value: StringSpan },
-    Specified { negated: bool, spec: ClassSpec },
+    Posix {
+        negated: bool,
+        kind:    PosixKind,
+    },
+    Unicode {
+        negated: bool,
+        name:    Option<StringSpan>,
+        value:   StringSpan,
+    },
+    Specified {
+        negated: bool,
+        spec:    ClassSpec,
+    },
 }
 
 pub enum PosixKind {
@@ -60,7 +98,7 @@ pub enum PosixKind {
 }
 
 pub struct ClassSpec {
-    pub span: Span,
+    pub span:  Span,
     pub items: Vec<ClassSpecKind>,
 }
 
@@ -75,6 +113,6 @@ pub enum ClassSpecKind {
 }
 
 pub struct StringSpan {
-    span: Span,
+    span:  Span,
     value: String,
 }

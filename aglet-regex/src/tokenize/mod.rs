@@ -4,7 +4,7 @@ pub(crate) mod state;
 pub mod token;
 pub mod tokenizer;
 
-pub use error::{Result, TokenizeError};
+pub use error::{ErrorKind, Result, TokenizeError};
 pub use token::{Token, TokenKind};
 pub use tokenizer::Tokenizer;
 
@@ -13,33 +13,49 @@ pub(crate) fn assert_tokens(mut tr: Tokenizer, tokens: Vec<TokenKind>) {
     let total_expected = tokens.len();
     let mut count = 0;
     for expected in tokens {
-        if let Ok(actual) = tr.next_token() {
-            assert_eq!(actual.kind, expected);
-        } else {
-            assert_eq!(count, total_expected);
-        }
+        let actual = tr
+            .next()
+            .expect("ran out of tokens")
+            .expect("received error")
+            .kind;
+        assert_eq!(expected, actual);
         count += 1;
     }
 
-    assert!(matches!(tr.next_token(), Err(TokenizeError::EndOfFile)));
+    assert_eq!(total_expected, count);
+    assert_next_none!(tr);
 }
 
 #[cfg(test)]
-pub(crate) fn assert_tokens_result(
-    mut tr: Tokenizer,
-    results: Vec<std::result::Result<TokenKind, TokenizeError>>
-) {
-    let total_expected = results.len();
-    let mut count = 0;
-    for expected_results in results {
-        match (tr.next_token(), expected_results) {
-            (Ok(actual), Ok(expected)) => {
-                assert_eq!(actual.kind, expected);
-            },
-            (Err(actual), Err(expected)) => {
-                assert_eq!(actual, expected);
-            }
-            _ => panic!("value does not match expected"),
-        }
-    }
+macro_rules! assert_next_tok {
+    ( $tokenizer:expr , $kind:pat ) => {
+        assert!(matches!(
+            $tokenizer.next(),
+            Some(Ok(Token { kind: $kind, .. }))
+        ));
+    };
 }
+
+#[cfg(test)]
+macro_rules! assert_next_err {
+    ( $tokenizer:expr , $kind:pat ) => {
+        assert!(matches!(
+            $tokenizer.next(),
+            Some(Err(TokenizeError { kind: $kind, .. }))
+        ));
+    };
+}
+
+#[cfg(test)]
+macro_rules! assert_next_none {
+    ( $tokenizer:expr ) => {
+        assert!(matches!($tokenizer.next(), None));
+    };
+}
+
+#[cfg(test)]
+pub(crate) use assert_next_err;
+#[cfg(test)]
+pub(crate) use assert_next_none;
+#[cfg(test)]
+pub(crate) use assert_next_tok;

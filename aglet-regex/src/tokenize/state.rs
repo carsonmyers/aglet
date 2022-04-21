@@ -8,23 +8,26 @@ pub(crate) struct StateStack {
 
 impl StateStack {
     pub fn new() -> Self {
-        StateStack { stack: vec![StateFlags::default()] }
+        StateStack {
+            stack: vec![StateFlags::default()],
+        }
     }
 
     pub fn push(&mut self, state: State) {
-        let flags = self.stack.last()
+        let flags = self
+            .stack
+            .last()
             .map(|sf| sf.flags.clone())
             .unwrap_or(Flags::default());
 
-        self.stack.push(StateFlags{state, flags});
+        self.stack.push(StateFlags { state, flags });
     }
 
     pub fn swap(&mut self, state: State) -> Result<State, StateError> {
-        let former = self.stack.pop()
-            .ok_or(StateError::NoStateOnStack)?;
+        let former = self.stack.pop().ok_or(StateError::NoStateOnStack)?;
         let flags = former.flags.clone();
 
-        self.stack.push(StateFlags{state, flags});
+        self.stack.push(StateFlags { state, flags });
         Ok(former.state)
     }
 
@@ -33,27 +36,38 @@ impl StateStack {
             return Err(StateError::PoppedFinalState);
         }
 
-        self.stack.pop()
+        self.stack
+            .pop()
             .map(|sf| sf.state)
             .ok_or(StateError::NoStateOnStack)
     }
 
+    pub fn pop_all(&mut self) -> Result<(), StateError> {
+        if self.stack.len() == 1 {
+            return Err(StateError::PoppedFinalState);
+        }
+
+        self.stack.clear();
+        self.stack.push(StateFlags::default());
+
+        Ok(())
+    }
+
     pub fn flags(&self) -> Result<&Flags, StateError> {
-        let top = self.stack.last()
-            .ok_or(StateError::NoStateOnStack)?;
+        let top = self.stack.last().ok_or(StateError::NoStateOnStack)?;
 
         Ok(&top.flags)
     }
 
     pub fn flags_mut(&mut self) -> Result<&mut Flags, StateError> {
-        let top = self.stack.last_mut()
-            .ok_or(StateError::NoStateOnStack)?;
+        let top = self.stack.last_mut().ok_or(StateError::NoStateOnStack)?;
 
         Ok(&mut top.flags)
     }
 
     pub fn get(&self) -> Result<&State, StateError> {
-        self.stack.last()
+        self.stack
+            .last()
             .map(|sf| &sf.state)
             .ok_or(StateError::NoStateOnStack)
     }
@@ -62,10 +76,9 @@ impl StateStack {
 impl fmt::Debug for StateStack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
-        self.stack.iter()
-            .for_each(|sf| {
-                list.entry(&sf);
-            });
+        self.stack.iter().for_each(|sf| {
+            list.entry(&sf);
+        });
 
         list.finish()
     }
@@ -82,9 +95,7 @@ pub(crate) enum State {
 }
 
 impl Default for State {
-    fn default() -> Self {
-        State::Main
-    }
+    fn default() -> Self { State::Main }
 }
 
 #[derive(Default, Clone, Copy)]

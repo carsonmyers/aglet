@@ -1,6 +1,8 @@
 use std::fmt;
+
 use aglet_text::Span;
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,

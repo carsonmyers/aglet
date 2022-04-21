@@ -1,17 +1,22 @@
-// TODO: turn Tokenizer into an iterator (Option<Result<Token, TokenizeError>>)
-// TODO: test error cases
+use std::io::Write;
+use std::iter;
+
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 use crate::tokenize::error::*;
 use crate::tokenize::input::*;
 use crate::tokenize::state::*;
 use crate::tokenize::token::*;
+#[cfg(test)]
+use crate::tokenize::{assert_next_err, assert_next_none, assert_next_tok};
 
 /// Tokenizer for a regular expression
 pub struct Tokenizer<'a> {
-    input: Input<'a>,
-    state: StateStack,
-    last_token_kind: Option<TokenKind>,
+    input:            Input<'a>,
+    state:            StateStack,
+    last_token_kind:  Option<TokenKind>,
     print_debug_info: bool,
+    dbgout:           StandardStream,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -27,14 +32,15 @@ impl<'a> Tokenizer<'a> {
     /// ```
     /// use aglet_regex::tokenize;
     /// let _ = tokenize::Tokenizer::new("[a-z-]{1, 4}");
-    /// let _ = tokenize::Tokenizer::new(String::from("^hello, world$"));
+    /// let _ = tokenize::Tokenizer::new("^hello, world$");
     /// ```
     pub fn new<T: Into<&'a str>>(input: T) -> Self {
         Tokenizer {
-            input: Input::new(input),
-            state: StateStack::new(),
-            last_token_kind: None,
+            input:            Input::new(input),
+            state:            StateStack::new(),
+            last_token_kind:  None,
             print_debug_info: false,
+            dbgout:           StandardStream::stderr(ColorChoice::Always),
         }
     }
 
@@ -58,9 +64,7 @@ impl<'a> Tokenizer<'a> {
     /// // !!!                            Err(EndOfFile)                 -> [State(Main, [])]
     /// let _ = tr.next_token();
     /// ```
-    pub fn set_debug(&mut self) {
-        self.print_debug_info = true;
-    }
+    pub fn set_debug(&mut self) { self.print_debug_info = true; }
 
     /// Get the next token from the input. A token includes both the kind of the
     /// token along with the kind's associated data (e.g. a literal includes the
@@ -92,25 +96,35 @@ impl<'a> Tokenizer<'a> {
             Ok(State::ClassName) => self.next_token_class_name(),
             Ok(State::Range) => self.next_token_range(),
             Ok(State::UnicodeProperties) => self.next_token_unicode_properties(),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(self.input.error(err.into())),
         };
 
         if self.print_debug_info {
             if let Ok(ref tok) = token {
-                println!("{:<30} {:<30} -> {:?}",
+                let _ = writeln!(
+                    &mut self.dbgout,
+                    "{:<30} {:<30} -> {:?}",
                     format!("{:?}", &tok.span),
                     format!("{:?}", &tok.kind),
-                    self.state);
+                    self.state
+                );
             } else {
-                println!("{:<30} {:<30} -> {:?}",
-                    "!!!",
-                    format!("{:?}", &token),
-                    self.state);
+                let err = token.clone().unwrap_err();
+                let _ = self
+                    .dbgout
+                    .set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+
+                let _ = writeln!(
+                    &mut self.dbgout,
+                    "{:<30} {:<30} -> {:?}",
+                    format!("{:?}", &err.span),
+                    format!("{:?}", &err.kind),
+                    self.state
+                );
             }
         }
 
-        self.last_token_kind = token.as_ref().ok()
-            .map(|t| t.kind.clone());
+        self.last_token_kind = token.as_ref().ok().map(|t| t.kind.clone());
 
         token
     }
@@ -126,73 +140,62 @@ impl<'a> Tokenizer<'a> {
     fn next_token_main(&mut self) -> Result<Token> {
         // If the ignore_whitespace flag is set, try to skip any whitespace
         // before reading the next token in the main state
-        let flags = self.state.flags()?;
+        let flags = self.flags()?;
         if flags.ignore_space {
             self.skip_whitespace();
         }
 
         match self.input.next() {
-            Some('^') => self.input.token(TokenKind::StartOfLine),
-            Some('$') => self.input.token(TokenKind::EndOfLine),
-            Some('.') => self.input.token(TokenKind::Any),
-            Some('?') => self.input.token(TokenKind::Question),
-            Some('*') => self.input.token(TokenKind::ZeroOrMore),
-            Some('+') => self.input.token(TokenKind::OneOrMore),
-            Some('|') => self.input.token(TokenKind::Alternate),
+            Some('^') => Ok(self.input.token(TokenKind::StartOfLine)),
+            Some('$') => Ok(self.input.token(TokenKind::EndOfLine)),
+            Some('.') => Ok(self.input.token(TokenKind::Any)),
+            Some('?') => Ok(self.input.token(TokenKind::Question)),
+            Some('*') => Ok(self.input.token(TokenKind::ZeroOrMore)),
+            Some('+') => Ok(self.input.token(TokenKind::OneOrMore)),
+            Some('|') => Ok(self.input.token(TokenKind::Alternate)),
 
             // The `(` token enters the group parsing state, e.g. `(?:abc)`
             // This state is swapped with another `Main` state after the header
             // is matched - a group name, flags, non-capturing token, etc.
             Some('(') => {
                 self.state.push(State::Group);
-                self.input.token(TokenKind::OpenGroup)
+                Ok(self.input.token(TokenKind::OpenGroup))
             },
 
             // The group state swaps to the main state as soon as its header
             // has been parsed; so this state is responsible for matching the
             // `)` token and popping the state
-            Some(')') => {
-                match self.state.pop() {
-                    Ok(_) => self.input.token(TokenKind::CloseGroup),
-                    Err(StateError::PoppedFinalState) =>
-                        self.input.token(TokenKind::CloseGroup),
-                    Err(err @ _) => Err(err.into()),
-                }
+            Some(')') => match self.state.pop() {
+                Ok(_) => Ok(self.input.token(TokenKind::CloseGroup)),
+                Err(StateError::PoppedFinalState) => Ok(self.input.token(TokenKind::CloseGroup)),
+                Err(err @ _) => Err(self.input.error(err.into())),
             },
 
             // The `[` token pushes the character class state, e.g. `[a-z]`
             Some('[') => {
                 self.state.push(State::Class);
-                self.input.token(TokenKind::OpenBracket)
+                Ok(self.input.token(TokenKind::OpenBracket))
             },
 
             // The main state is responsible for popping the class state
-            Some(']') => self.input.token(TokenKind::CloseBracket),
+            Some(']') => Ok(self.input.token(TokenKind::CloseBracket)),
 
             // The `{` token pushes the range state, e.g. `{1,3}`
             Some('{') => {
                 self.state.push(State::Range);
-                self.input.token(TokenKind::OpenBrace)
+                Ok(self.input.token(TokenKind::OpenBrace))
             },
 
             // The main state is responsible for popping the range state
-            Some('}') => self.input.token(TokenKind::CloseBrace),
+            Some('}') => Ok(self.input.token(TokenKind::CloseBrace)),
 
             // escape sequences can be a single character after a backslash,
             // or a more complicated unicode escapse e.g. `\x{01A1}`
             Some('\\') => self.parse_escape_sequence_main(),
 
             // All other input characters are literals
-            Some(c) => self.input.token(TokenKind::Literal(c)),
-            None => {
-                if self.state.stack.len() > 1 {
-                    Err(TokenizeError::UnexpectedEOF(String::from(
-                        "expected end of group `)`"
-                    )))
-                } else {
-                    Err(TokenizeError::EndOfFile)
-                }
-            },
+            Some(c) => Ok(self.input.token(TokenKind::Literal(c))),
+            None => Err(self.input.error(ErrorKind::EndOfFile)),
         }
     }
 
@@ -215,7 +218,7 @@ impl<'a> Tokenizer<'a> {
                     // `?:` marks a non-capturing group
                     Some(':') => {
                         self.input.next();
-                        self.input.token(TokenKind::NonCapturing)
+                        Ok(self.input.token(TokenKind::NonCapturing))
                     },
                     // `?P` is the beginning of a named group, e.g. `(?P<name>)`
                     Some('P') => {
@@ -224,12 +227,16 @@ impl<'a> Tokenizer<'a> {
                     },
                     // anything else is setting flags, either for the scope
                     // above or for whatever follows in the group
-                    Some(_) => {
-                        self.parse_flags()
+                    Some(_) => self.parse_flags(),
+                    None => {
+                        self.state
+                            .pop_all()
+                            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+
+                        Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                            "expected `:`, `P`, or group flags",
+                        ))))
                     },
-                    None => Err(TokenizeError::UnexpectedEOF(String::from(
-                        "expected `:`, `P`, or group flags"
-                    ))),
                 }
             },
             // Once the group header has been turned into tokens, swap with the
@@ -237,7 +244,9 @@ impl<'a> Tokenizer<'a> {
             // remainder is just a `)` token to close the group and pop the
             // state)
             _ => {
-                self.state.swap(State::Main);
+                self.state
+                    .swap(State::Main)
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
                 self.next_token_main()
             },
         }
@@ -250,60 +259,71 @@ impl<'a> Tokenizer<'a> {
     fn next_token_class(&mut self) -> Result<Token> {
         // If the ignore_whitespace flag is set, skip any whitespace and
         // comments before matching the next class token
-        let flags = self.state.flags()?;
+        let flags = self.flags()?;
         if flags.ignore_space {
             self.skip_whitespace();
         }
 
         match self.input.next() {
             // `-` at the end of the class (e.g. `-]`) is just a literal
-            Some('-') if matches!(self.input.peek(), Some(']')) =>
-                self.input.token(TokenKind::Literal('-')),
+            Some('-') if matches!(self.input.peek(), Some(']')) => {
+                Ok(self.input.token(TokenKind::Literal('-')))
+            },
             // `--` is the difference token
             Some('-') if matches!(self.input.peek(), Some('-')) => {
                 self.input.next();
-                self.input.token(TokenKind::RangeDifference)
+                Ok(self.input.token(TokenKind::RangeDifference))
             },
             // `-` following a literal is a range token (e.g. `a-`)
-            Some('-') if matches!(self.last_token_kind, Some(TokenKind::Literal(_))) =>
-                self.input.token(TokenKind::Range),
+            Some('-') if matches!(self.last_token_kind, Some(TokenKind::Literal(_))) => {
+                Ok(self.input.token(TokenKind::Range))
+            },
             // In any other case, `-` is just a literal
-            Some('-') => self.input.token(TokenKind::Literal('-')),
+            Some('-') => Ok(self.input.token(TokenKind::Literal('-'))),
             // `[:` begins a named class, e.g. `[:alpha:]`
             Some('[') if matches!(self.input.peek(), Some(':')) => {
                 self.state.push(State::ClassName);
-                self.input.token(TokenKind::OpenBracket)
-            }
+                Ok(self.input.token(TokenKind::OpenBracket))
+            },
             // If not part of `[:`, `[` just begins a new sub-class
             Some('[') => {
                 self.state.push(State::Class);
-                self.input.token(TokenKind::OpenBracket)
-            }
+                Ok(self.input.token(TokenKind::OpenBracket))
+            },
             // `]` ends a class name or a character class and pops its own state
             Some(']') => {
-                self.state.pop();
-                self.input.token(TokenKind::CloseBracket)
+                self.state
+                    .pop()
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                Ok(self.input.token(TokenKind::CloseBracket))
             },
             // `^` at the beginning of a character class is a negation
-            Some('^') if matches!(self.last_token_kind, Some(TokenKind::OpenBracket)) =>
-                self.input.token(TokenKind::Negated),
+            Some('^') if matches!(self.last_token_kind, Some(TokenKind::OpenBracket)) => {
+                Ok(self.input.token(TokenKind::Negated))
+            },
             // `&&` is an intersection token
             Some('&') if matches!(self.input.peek(), Some('&')) => {
                 self.input.next();
-                self.input.token(TokenKind::RangeIntersection)
+                Ok(self.input.token(TokenKind::RangeIntersection))
             },
             // `~~` is a symmetrical difference token
             Some('~') if matches!(self.input.peek(), Some('~')) => {
                 self.input.next();
-                self.input.token(TokenKind::RangeSymmetrical)
-            }
+                Ok(self.input.token(TokenKind::RangeSymmetrical))
+            },
             // Special characters can be escaped in classes
             Some('\\') => self.parse_escape_sequence_class(),
             // All other characters are just literals
-            Some(c) => self.input.token(TokenKind::Literal(c)),
-            None => Err(TokenizeError::UnexpectedEOF(String::from(
-                "expected end of character class `]`"
-            ))),
+            Some(c) => Ok(self.input.token(TokenKind::Literal(c))),
+            None => {
+                self.state
+                    .pop_all()
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+
+                Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    "expected end of character class `]`",
+                ))))
+            },
         }
     }
 
@@ -343,15 +363,19 @@ impl<'a> Tokenizer<'a> {
                 // Any alphabetic characters are included in the class name
                 Some(c) if c.is_ascii_alphabetic() => name.push(c),
                 // Any other characters are rejected
-                Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of named character class `:]`"
-                ))),
+                Some(c) => return Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+                None => {
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of named character class `:]`",
+                    ))))
+                },
             }
         }
 
-        self.state.pop();
-        self.input.token(TokenKind::ClassName(name, negated))
+        self.state
+            .pop()
+            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+        Ok(self.input.token(TokenKind::ClassName(name, negated)))
     }
 
     /// Get a token in the `Range` state
@@ -369,19 +393,26 @@ impl<'a> Tokenizer<'a> {
             // The end of the range pops its own state
             Some('}') => {
                 self.input.next();
-                self.state.pop();
-                self.input.token(TokenKind::CloseBrace)
+                self.state
+                    .pop()
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                Ok(self.input.token(TokenKind::CloseBrace))
             },
             // A comma separates the start and end for the range
             Some(',') => {
                 self.input.next();
-                self.input.token(TokenKind::Comma)
+                Ok(self.input.token(TokenKind::Comma))
             },
             // Anything else is interpreted as a number; this may fail
             Some(_) => self.parse_number(),
-            None => Err(TokenizeError::UnexpectedEOF(String::from(
-                "expected end of rance `}` or `,`"
-            ))),
+            None => {
+                self.state
+                    .pop_all()
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    "expected end of rance `}` or `,`",
+                ))))
+            },
         }
     }
 
@@ -413,14 +444,13 @@ impl<'a> Tokenizer<'a> {
                 // the equal sign since the property name has been returned
                 Some('=') if item.len() == 0 => {
                     self.input.next();
-                    return self.input.token(TokenKind::UnicodeEqual(false));
+                    return Ok(self.input.token(TokenKind::UnicodeEqual(false)));
                 },
                 // `=` when some characters have already been matched denotes
                 // the end of a property name; so return the property name and
                 // leave the `=` character to be matched by the next invocation
                 // of this function
-                Some('=') =>
-                    return self.input.token(TokenKind::UnicodePropName(item)),
+                Some('=') => return Ok(self.input.token(TokenKind::UnicodePropName(item))),
                 // `!` can be the beginning of a negated `=` - but only if it's
                 // followed by an `=`
                 Some('!') if item.len() == 0 => {
@@ -429,27 +459,27 @@ impl<'a> Tokenizer<'a> {
                         // It's a `!=` token
                         Some('=') => {
                             self.input.next();
-                            self.input.token(TokenKind::UnicodeEqual(true))
+                            Ok(self.input.token(TokenKind::UnicodeEqual(true)))
                         },
                         // It's just a random `!` - unexpected
-                        Some(c) => Err(TokenizeError::UnexpectedChar(c)),
-                        None => Err(TokenizeError::EndOfFile),
-                    }
-                }
+                        Some(c) => Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+                        None => Err(self.input.error(ErrorKind::EndOfFile)),
+                    };
+                },
                 // `!` ends the current property name, like `=`
-                Some('!') =>
-                    return self.input.token(TokenKind::UnicodePropName(item)),
+                Some('!') => return Ok(self.input.token(TokenKind::UnicodePropName(item))),
                 // `}` ends `UnicodeProperties` state and pops its own state
                 Some('}') if item.len() == 0 => {
                     self.input.next();
-                    self.state.pop();
-                    return self.input.token(TokenKind::UnicodeLongEnd);
-                }
+                    self.state
+                        .pop()
+                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    return Ok(self.input.token(TokenKind::UnicodeLongEnd));
+                },
                 // `}` when there is text stored in `item` denotes the end of
                 // a unicode property value; return the value token and leave
                 // the closing brace for the next invocation of this function
-                Some('}') =>
-                    return self.input.token(TokenKind::UnicodePropValue(item)),
+                Some('}') => return Ok(self.input.token(TokenKind::UnicodePropValue(item))),
                 // Alphanumeric characters get added to `item` to be returned
                 // as either property name or value tokens
                 Some(c) if c.is_ascii_alphanumeric() => {
@@ -457,11 +487,29 @@ impl<'a> Tokenizer<'a> {
                     item.push(c)
                 },
                 // Anything else is an unexpected character
-                Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of unicode class `}`, `,` `!=` or `=`"
-                ))),
+                Some(c) => return Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+                None => {
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of unicode class `}`, `,` `!=` or `=`",
+                    ))))
+                },
             }
+        }
+    }
+
+    /// Get an immutable copy of the state flags
+    fn flags(&mut self) -> Result<&Flags> {
+        match self.state.flags() {
+            Ok(flags) => Ok(flags),
+            Err(err) => Err(self.input.error(ErrorKind::InternalStateError(err))),
+        }
+    }
+
+    /// Get a mutable copy of the state flags
+    fn flags_mut(&mut self) -> Result<&mut Flags> {
+        match self.state.flags_mut() {
+            Ok(flags) => Ok(flags),
+            Err(err) => Err(self.input.error(ErrorKind::InternalStateError(err))),
         }
     }
 
@@ -509,22 +557,22 @@ impl<'a> Tokenizer<'a> {
     /// classes are also parsed here, as well as hexadecimal numerical escapes.
     fn parse_escape_sequence_main(&mut self) -> Result<Token> {
         match self.input.next() {
-            Some('A') => self.input.token(TokenKind::StartOfText),
-            Some('z') => self.input.token(TokenKind::EndOfText),
-            Some('b') => self.input.token(TokenKind::WordBoundary),
-            Some('B') => self.input.token(TokenKind::NonWordBoundary),
-            Some('a') => self.input.token(TokenKind::Literal('\x07')),
-            Some('f') => self.input.token(TokenKind::Literal('\x0C')),
-            Some('t') => self.input.token(TokenKind::Literal('\t')),
-            Some('n') => self.input.token(TokenKind::Literal('\n')),
-            Some('r') => self.input.token(TokenKind::Literal('\r')),
-            Some('v') => self.input.token(TokenKind::Literal('\x0B')),
-            Some('d') => self.input.token(TokenKind::Digit(false)),
-            Some('D') => self.input.token(TokenKind::Digit(true)),
-            Some('s') => self.input.token(TokenKind::Whitespace(false)),
-            Some('S') => self.input.token(TokenKind::Whitespace(true)),
-            Some('w') => self.input.token(TokenKind::WordChar(false)),
-            Some('W') => self.input.token(TokenKind::WordChar(true)),
+            Some('A') => Ok(self.input.token(TokenKind::StartOfText)),
+            Some('z') => Ok(self.input.token(TokenKind::EndOfText)),
+            Some('b') => Ok(self.input.token(TokenKind::WordBoundary)),
+            Some('B') => Ok(self.input.token(TokenKind::NonWordBoundary)),
+            Some('a') => Ok(self.input.token(TokenKind::Literal('\x07'))),
+            Some('f') => Ok(self.input.token(TokenKind::Literal('\x0C'))),
+            Some('t') => Ok(self.input.token(TokenKind::Literal('\t'))),
+            Some('n') => Ok(self.input.token(TokenKind::Literal('\n'))),
+            Some('r') => Ok(self.input.token(TokenKind::Literal('\r'))),
+            Some('v') => Ok(self.input.token(TokenKind::Literal('\x0B'))),
+            Some('d') => Ok(self.input.token(TokenKind::Digit(false))),
+            Some('D') => Ok(self.input.token(TokenKind::Digit(true))),
+            Some('s') => Ok(self.input.token(TokenKind::Whitespace(false))),
+            Some('S') => Ok(self.input.token(TokenKind::Whitespace(true))),
+            Some('w') => Ok(self.input.token(TokenKind::WordChar(false))),
+            Some('W') => Ok(self.input.token(TokenKind::WordChar(true))),
             // Parse a unicode class, whether a simple one-character escape
             // sequence or a braced expression
             Some('p') => self.parse_unicode(false),
@@ -535,13 +583,14 @@ impl<'a> Tokenizer<'a> {
             // single literal character (e.g. \x7F)
             Some(c) if Tokenizer::is_hex_escape(&c) => self.parse_hex(c),
             // Certain special characters can be escaped to a literal (e.g., \})
-            Some(c) if Tokenizer::escapes_to_literal_main(&c) =>
-                self.input.token(TokenKind::Literal(c)),
+            Some(c) if Tokenizer::escapes_to_literal_main(&c) => {
+                Ok(self.input.token(TokenKind::Literal(c)))
+            },
             // Everything else is an invalid escape sequence
-            Some(c) => Err(TokenizeError::UnrecognizedEscape(c)),
+            Some(c) => Err(self.input.error(ErrorKind::UnrecognizedEscape(c))),
             // In lieu of an end of file error, we know that an errant \ exists
             // in the input, so use a more specific error
-            None => Err(TokenizeError::UnexpectedChar('\\')),
+            None => Err(self.input.error(ErrorKind::UnexpectedChar('\\'))),
         }
     }
 
@@ -577,18 +626,20 @@ impl<'a> Tokenizer<'a> {
             match self.input.next() {
                 Some(c) if c.is_ascii_hexdigit() => number.push(c),
                 Some('}') if bounded => break,
-                Some(c) => return Err(TokenizeError::InvalidHexDigit(c)),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of hex literal"
-                ))),
+                Some(c) => return Err(self.input.error(ErrorKind::InvalidHexDigit(c))),
+                None => {
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of hex literal",
+                    ))))
+                },
             };
         }
 
         let value = u32::from_str_radix(&number, 16)
             .expect(&format!("accepted invalid hex string: {}", number));
         let c = char::from_u32(value)
-            .ok_or(TokenizeError::InvalidCharCode(number))?;
-        self.input.token(TokenKind::Literal(c))
+            .ok_or_else(|| self.input.error(ErrorKind::InvalidCharCode(number)))?;
+        Ok(self.input.token(TokenKind::Literal(c)))
     }
 
     /// Parse a unicode character class, either as a simple one-character
@@ -606,17 +657,18 @@ impl<'a> Tokenizer<'a> {
         // Check for a braced expression and enter the `UnicodeProperties` state
         if self.input.matches('{') {
             self.state.push(State::UnicodeProperties);
-            return self.input.token(TokenKind::UnicodeLongStart(negated));
+            return Ok(self.input.token(TokenKind::UnicodeLongStart(negated)));
         }
 
         // Otherwise, it's a single-character class
         match self.input.next() {
-            Some(c) if c.is_ascii_alphabetic() =>
-                self.input.token(TokenKind::UnicodeShort(c, negated)),
-            Some(c) => Err(TokenizeError::UnexpectedChar(c)),
-            None => Err(TokenizeError::UnexpectedEOF(String::from(
-                "expected single-character unicode general category"
-            ))),
+            Some(c) if c.is_ascii_alphabetic() => {
+                Ok(self.input.token(TokenKind::UnicodeShort(c, negated)))
+            },
+            Some(c) => Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+            None => Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                "expected single-character unicode general category",
+            )))),
         }
     }
 
@@ -637,15 +689,19 @@ impl<'a> Tokenizer<'a> {
                 Some('>') => break,
                 // Any character between `<` and `>` goes into the name
                 Some(c) => name.push(c),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of group name `>` and end of group `)`"
-                ))),
+                None => {
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of group name `>`",
+                    ))))
+                },
             }
         }
 
         // The `Group` state ends when a group name is matched
-        self.state.pop();
-        self.input.token(TokenKind::Name(name))
+        self.state
+            .pop()
+            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+        Ok(self.input.token(TokenKind::Name(name)))
     }
 
     /// Parse group flags, whether they apply to the above scope or withing
@@ -728,16 +784,24 @@ impl<'a> Tokenizer<'a> {
                 Some('-') => {
                     self.input.next();
                     clearing = true;
-                }
+                },
                 // The `)` character terminates the flag section and specifies a
                 // flag group that affects the enclosing scope (i.e. not a non-
                 // capturing group)
                 Some(')') => break,
                 // Any other character is invalid here
-                Some(c) => return Err(TokenizeError::UnrecognizedFlag(c)),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of group `)` or end of flags `:`"
-                ))),
+                Some(c) => {
+                    self.input.next();
+                    return Err(self.input.error(ErrorKind::UnrecognizedFlag(c)));
+                },
+                None => {
+                    self.state
+                        .pop_all()
+                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of group `)` or end of flags `:`",
+                    ))));
+                },
             }
         }
 
@@ -755,11 +819,12 @@ impl<'a> Tokenizer<'a> {
             // * [Main(false)]               - original flag used once the `)`
             //                                 token pops a state from the stack
             if let Some(val) = set_ignore_whitespace {
-                let mut flags = self.state.flags_mut()?;
+                let mut flags = self.flags_mut()?;
                 flags.ignore_space = val
             }
 
-            self.input.token(TokenKind::NonCapturingFlags(set_flags, clear_flags))
+            self.input
+                .token(TokenKind::NonCapturingFlags(set_flags, clear_flags))
         } else {
             // If we're setting the whitespace flag in a flag token, then the
             // state below this one needs to get the flag. The next_main
@@ -777,8 +842,12 @@ impl<'a> Tokenizer<'a> {
             //                                 the group header is parsed
             // * [Main(true)]                - next_main will pop the state
             if let Some(val) = set_ignore_whitespace {
-                let this_state = self.state.pop()?;
-                let mut flags = self.state.flags_mut()?;
+                let this_state = self
+                    .state
+                    .pop()
+                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+
+                let mut flags = self.flags_mut()?;
                 flags.ignore_space = val;
                 self.state.push(this_state);
             }
@@ -786,7 +855,7 @@ impl<'a> Tokenizer<'a> {
             self.input.token(TokenKind::Flags(set_flags, clear_flags))
         };
 
-        result
+        Ok(result)
     }
 
     /// Parse an escape sequence in the `Class` state
@@ -800,16 +869,17 @@ impl<'a> Tokenizer<'a> {
     /// state (e.g. \&, \-) can be escaped here.
     fn parse_escape_sequence_class(&mut self) -> Result<Token> {
         match self.input.next() {
-            Some('s') => self.input.token(TokenKind::Whitespace(false)),
-            Some('S') => self.input.token(TokenKind::Whitespace(true)),
-            Some('d') => self.input.token(TokenKind::Digit(false)),
-            Some('D') => self.input.token(TokenKind::Digit(true)),
-            Some('w') => self.input.token(TokenKind::WordChar(false)),
-            Some('W') => self.input.token(TokenKind::WordChar(true)),
-            Some(c) if Tokenizer::escapes_to_literal_class(&c) =>
-                self.input.token(TokenKind::Literal(c)),
-            Some(c) => Err(TokenizeError::UnrecognizedEscape(c)),
-            None => Err(TokenizeError::UnexpectedChar('\\')),
+            Some('s') => Ok(self.input.token(TokenKind::Whitespace(false))),
+            Some('S') => Ok(self.input.token(TokenKind::Whitespace(true))),
+            Some('d') => Ok(self.input.token(TokenKind::Digit(false))),
+            Some('D') => Ok(self.input.token(TokenKind::Digit(true))),
+            Some('w') => Ok(self.input.token(TokenKind::WordChar(false))),
+            Some('W') => Ok(self.input.token(TokenKind::WordChar(true))),
+            Some(c) if Tokenizer::escapes_to_literal_class(&c) => {
+                Ok(self.input.token(TokenKind::Literal(c)))
+            },
+            Some(c) => Err(self.input.error(ErrorKind::UnrecognizedEscape(c))),
+            None => Err(self.input.error(ErrorKind::UnexpectedChar('\\'))),
         }
     }
 
@@ -831,40 +901,38 @@ impl<'a> Tokenizer<'a> {
                 Some(c) if c.is_numeric() => {
                     self.input.next();
                     number.push(c);
-                }
+                },
                 // Anything else is an unexpected character
-                Some(c) => return Err(TokenizeError::UnexpectedChar(c)),
-                None => return Err(TokenizeError::UnexpectedEOF(String::from(
-                    "expected end of range `}`"
-                ))),
+                Some(c) => {
+                    self.input.next();
+                    return Err(self.input.error(ErrorKind::UnexpectedChar(c)));
+                },
+                None => {
+                    self.state
+                        .pop_all()
+                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        "expected end of range `}`",
+                    ))));
+                },
             }
         }
 
         // This function is only for parsing the number, so a number should
         // always be the output. Parse the input as an unsigned integer
-        let value = number.parse::<u32>()
+        let value = number
+            .parse::<u32>()
             .expect(&format!("accepted invalid number: {}", number));
 
-        self.input.token(TokenKind::Number(value))
+        Ok(self.input.token(TokenKind::Number(value)))
     }
 
     /// Check whether a character can be escaped in the `Main` state
     fn escapes_to_literal_main(c: &char) -> bool {
         match c {
-            '^' |
-            '$' |
-            '.' |
-            '?' |
-            '*' |
-            '+' |
-            '|' |
-            '(' |
-            ')' |
-            '[' |
-            ']' |
-            '{' |
-            '}' |
-            '\\' => true,
+            '^' | '$' | '.' | '?' | '*' | '+' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' => {
+                true
+            },
             _ => false,
         }
     }
@@ -872,14 +940,7 @@ impl<'a> Tokenizer<'a> {
     /// Check whether a character can be escaped in the `Class` state
     fn escapes_to_literal_class(c: &char) -> bool {
         match c {
-            '^' |
-            '&' |
-            '~' |
-            '-' |
-            '[' |
-            ']' |
-            ':' |
-            '\\' => true,
+            '^' | '&' | '~' | '-' | '[' | ']' | ':' | '\\' => true,
             _ => false,
         }
     }
@@ -888,12 +949,7 @@ impl<'a> Tokenizer<'a> {
     /// ignore whitespace, enable unicode, etc.)
     fn is_group_flag(c: &char) -> bool {
         match c {
-            'i' |
-            'm' |
-            's' |
-            'U' |
-            'u' |
-            'x' => true,
+            'i' | 'm' | 's' | 'U' | 'u' | 'x' => true,
             _ => false,
         }
     }
@@ -902,10 +958,21 @@ impl<'a> Tokenizer<'a> {
     /// (e.g. in `\x7F`, `\u007F`, `\x{12AB}`, etc.)
     fn is_hex_escape(c: &char) -> bool {
         match c {
-            'x' |
-            'u' |
-            'U' => true,
+            'x' | 'u' | 'U' => true,
             _ => false,
+        }
+    }
+}
+
+impl<'a> iter::Iterator for Tokenizer<'a> {
+    type Item = Result<Token>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_token() {
+            Err(TokenizeError {
+                kind: ErrorKind::EndOfFile,
+                ..
+            }) => None,
+            result @ _ => Some(result),
         }
     }
 }
@@ -913,43 +980,53 @@ impl<'a> Tokenizer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tokenize::{assert_tokens, assert_tokens_result};
+    use crate::tokenize::assert_tokens;
 
     #[test]
     fn test_simple_main() {
         // Check the basic tokens in the main state
         let tr = Tokenizer::new(r"a^$.?*+|()]}");
-        assert_tokens(tr, vec![
-            TokenKind::Literal('a'),
-            TokenKind::StartOfLine,
-            TokenKind::EndOfLine,
-            TokenKind::Any,
-            TokenKind::Question,
-            TokenKind::ZeroOrMore,
-            TokenKind::OneOrMore,
-            TokenKind::Alternate,
-            TokenKind::OpenGroup,
-            TokenKind::CloseGroup,
-            TokenKind::CloseBracket,
-            TokenKind::CloseBrace,
-        ]);
+        assert_tokens(
+            tr,
+            vec![
+                TokenKind::Literal('a'),
+                TokenKind::StartOfLine,
+                TokenKind::EndOfLine,
+                TokenKind::Any,
+                TokenKind::Question,
+                TokenKind::ZeroOrMore,
+                TokenKind::OneOrMore,
+                TokenKind::Alternate,
+                TokenKind::OpenGroup,
+                TokenKind::CloseGroup,
+                TokenKind::CloseBracket,
+                TokenKind::CloseBrace,
+            ],
+        );
     }
 
     #[test]
     fn test_extra_group_end() {
         let tr = Tokenizer::new(r"a))");
-        assert_tokens_result(tr, vec![
-            Ok(TokenKind::Literal('a')),
-            Ok(TokenKind::CloseGroup),
-            Ok(TokenKind::CloseGroup),
-        ]);
+        let expected = vec![
+            TokenKind::Literal('a'),
+            TokenKind::CloseGroup,
+            TokenKind::CloseGroup,
+        ];
+
+        assert_tokens(tr, expected);
+    }
+
+    #[test]
+    fn test_expected_group_end() {
+        let mut tr = Tokenizer::new(r"(");
+        assert_next_tok!(tr, TokenKind::OpenGroup);
     }
 
     #[test]
     fn test_simple_escapes() {
-        // Check all the basic escapes in the main state
         let tr = Tokenizer::new(r"\A\z\b\B\a\f\t\n\r\v\d\D\s\S\w\W");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::StartOfText,
             TokenKind::EndOfText,
             TokenKind::WordBoundary,
@@ -966,14 +1043,16 @@ mod tests {
             TokenKind::Whitespace(true),
             TokenKind::WordChar(false),
             TokenKind::WordChar(true),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_literal_escapes() {
         // Check all the literal escapes in the main state
         let tr = Tokenizer::new(r"\^\$\.\?\*\+\|\(\)\[\]\{\}\\");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::Literal('^'),
             TokenKind::Literal('$'),
             TokenKind::Literal('.'),
@@ -988,82 +1067,148 @@ mod tests {
             TokenKind::Literal('{'),
             TokenKind::Literal('}'),
             TokenKind::Literal('\\'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
-    fn test_escape_errors() {
+    fn test_main_escape_errors() {
         let mut tr = Tokenizer::new(r"\:");
-        assert!(matches!(tr.next_token(), Err(TokenizeError::UnrecognizedEscape(':'))));
+        assert_next_err!(tr, ErrorKind::UnrecognizedEscape(':'));
+        assert_next_none!(tr);
 
         let mut tr = Tokenizer::new(r"\");
-        assert!(matches!(tr.next_token(), Err(TokenizeError::UnexpectedChar('\\'))));
+        assert_next_err!(tr, ErrorKind::UnexpectedChar('\\'));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"\p");
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"\u00");
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"\u00t");
+        assert_next_err!(tr, ErrorKind::InvalidHexDigit('t'));
+        assert_next_none!(tr);
+
+        // 0xD83F is part of a surrogate pair, and is not a valid codepoint
+        let mut tr = Tokenizer::new(r"\uD83F");
+        assert_next_err!(tr, ErrorKind::InvalidCharCode(_));
+        assert_next_none!(tr);
+    }
+
+    #[test]
+    fn test_class_escape_errors() {
+        let mut tr = Tokenizer::new(r"[\*");
+        assert_next_tok!(tr, TokenKind::OpenBracket);
+        assert_next_err!(tr, ErrorKind::UnrecognizedEscape('*'));
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"[\");
+        assert_next_tok!(tr, TokenKind::OpenBracket);
+        assert_next_err!(tr, ErrorKind::UnexpectedChar('\\'));
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
     }
 
     #[test]
     fn test_basic_group() {
         // Check basic group functionality
         let tr = Tokenizer::new(r"(a)b");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
             TokenKind::Literal('b'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_non_capturing_group() {
         // Test a non-capturing group
         let tr = Tokenizer::new(r"(?:ab)");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::NonCapturing,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::CloseGroup,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_named_group() {
         // Test a named group
         let tr = Tokenizer::new(r"(?P<name>");
-        assert_tokens(tr, vec![
-            TokenKind::OpenGroup,
-            TokenKind::Name(String::from("name")),
-        ]);
+        let expected = vec![TokenKind::OpenGroup, TokenKind::Name(String::from("name"))];
+
+        assert_tokens(tr, expected);
+    }
+
+    #[test]
+    fn test_group_errors() {
+        let mut tr = Tokenizer::new(r"(?");
+        assert_next_tok!(tr, TokenKind::OpenGroup);
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"(?P<name");
+        assert_next_tok!(tr, TokenKind::OpenGroup);
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"(?x");
+        assert_next_tok!(tr, TokenKind::OpenGroup);
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"(?q");
+        assert_next_tok!(tr, TokenKind::OpenGroup);
+        assert_next_err!(tr, ErrorKind::UnrecognizedFlag('q'));
+        assert_next_none!(tr);
     }
 
     #[test]
     fn test_flag_group() {
         // Test a flags group
         let tr = Tokenizer::new(r"(?isUx)");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::Flags(vec!['i', 's', 'U', 'x'], vec![]),
             TokenKind::CloseGroup,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_non_capturing_flag_group() {
         // Test a non-capturing flags group
         let tr = Tokenizer::new(r"(?mx:a)b");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::NonCapturingFlags(vec!['m', 'x'], vec![]),
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
             TokenKind::Literal('b'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_flag_parse() {
         // Test the flags tokens in a variety of configurations
         let tr = Tokenizer::new(r"(?is-Ux)(?-iU:)(?sx-)");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::Flags(vec!['i', 's'], vec!['U', 'x']),
             TokenKind::CloseGroup,
@@ -1073,14 +1218,16 @@ mod tests {
             TokenKind::OpenGroup,
             TokenKind::Flags(vec!['s', 'x'], vec![]),
             TokenKind::CloseGroup,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_linear_flag_settings() {
         // Test that flag ignore_whitespace settings escape the group
-        let mut tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
-        assert_tokens(tr, vec![
+        let tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
+        let expected = vec![
             TokenKind::Literal(' '),
             TokenKind::Literal('a'),
             TokenKind::Literal('\n'),
@@ -1097,15 +1244,17 @@ mod tests {
             TokenKind::Literal('a'),
             TokenKind::Literal('\n'),
             TokenKind::Literal('b'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_nested_flag_settings() {
         // Test that ignore_whitespace can be limited to group scope
-        let mut tr = Tokenizer::new("(?x: \nz(?-x: \ny) \nx) \nw");
-        tr.set_debug();
-        assert_tokens(tr, vec![
+        let tr = Tokenizer::new("(?x: \nz(?-x: \ny) \nx) \nw");
+
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::NonCapturingFlags(vec!['x'], vec![]),
             TokenKind::Literal('z'),
@@ -1120,27 +1269,31 @@ mod tests {
             TokenKind::Literal(' '),
             TokenKind::Literal('\n'),
             TokenKind::Literal('w'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_comment_skip() {
         // Test that ignore_whitespace will skip comments
         let tr = Tokenizer::new("(?x)#skip this comment\na$");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenGroup,
             TokenKind::Flags(vec!['x'], vec![]),
             TokenKind::CloseGroup,
             TokenKind::Literal('a'),
             TokenKind::EndOfLine,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_simple_class() {
         // Test basic class tokens
         let tr = Tokenizer::new(r"[^-^a-z-]");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::Negated,
             TokenKind::Literal('-'),
@@ -1150,14 +1303,16 @@ mod tests {
             TokenKind::Literal('z'),
             TokenKind::Literal('-'),
             TokenKind::CloseBracket,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_class_names_and_differences() {
         // Test named classes and some difference operators
         let tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:]]]");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::Literal('x'),
             TokenKind::OpenBracket,
@@ -1174,14 +1329,16 @@ mod tests {
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_named_classes_and_bad_negations() {
         // Test that named class negation works correctly
         let tr = Tokenizer::new(r"[[^:abc:]][:abc:]]]");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::OpenBracket,
             TokenKind::Negated,
@@ -1201,15 +1358,16 @@ mod tests {
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_class_escapes() {
         // Check that class escapes work correctly
-        let mut tr = Tokenizer::new(r"[\^\&&~\~\]\[[\:a:]\s\W\D\--]");
-        tr.set_debug();
-        assert_tokens(tr, vec![
+        let tr = Tokenizer::new(r"[\^\&&~\~\]\[[\:a:]\s\W\D\--]");
+        let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::Literal('^'),
             TokenKind::Literal('&'),
@@ -1229,14 +1387,16 @@ mod tests {
             TokenKind::Literal('-'),
             TokenKind::Literal('-'),
             TokenKind::CloseBracket,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_range() {
         // Check that basic ranges work correctly with whitespace skipping
         let tr = Tokenizer::new(r"{ 1 , 234 }{,}");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::OpenBrace,
             TokenKind::Number(1),
             TokenKind::Comma,
@@ -1245,67 +1405,97 @@ mod tests {
             TokenKind::OpenBrace,
             TokenKind::Comma,
             TokenKind::CloseBrace,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
+    }
+
+    #[test]
+    fn test_range_errors() {
+        let mut tr = Tokenizer::new(r"{:");
+        assert_next_tok!(tr, TokenKind::OpenBrace);
+        assert_next_err!(tr, ErrorKind::UnexpectedChar(':'));
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"{1a");
+        assert_next_tok!(tr, TokenKind::OpenBrace);
+        assert_next_err!(tr, ErrorKind::UnexpectedChar('a'));
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
+
+        let mut tr = Tokenizer::new(r"{");
+        assert_next_tok!(tr, TokenKind::OpenBrace);
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
     }
 
     #[test]
     fn test_basic_unicode() {
         // Check unbraced hex escapes
         let tr = Tokenizer::new(r"\x7F1\u4E2AE\U0000007F0");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::Literal('\x7F'),
             TokenKind::Literal('1'),
             TokenKind::Literal('\u{4E2A}'),
             TokenKind::Literal('E'),
             TokenKind::Literal('\x7F'),
             TokenKind::Literal('0'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_braced_unicode_x() {
         // Check that braced hex escapes work with \x
         let tr = Tokenizer::new(r"\x{1}\x{12}\x{123}\x{1234}\x{12345}");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
             TokenKind::Literal('\u{0123}'),
             TokenKind::Literal('\u{1234}'),
             TokenKind::Literal('\u{012345}'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_braced_unicode_u() {
         // Check that braced hex escapes work with \u
         let tr = Tokenizer::new(r"\u{1}\u{12}\u{123}\u{1234}\u{12345}");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
             TokenKind::Literal('\u{0123}'),
             TokenKind::Literal('\u{1234}'),
             TokenKind::Literal('\u{012345}'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_braced_unicode_upper_u() {
         // Check that braced hex escapes work with \U
         let tr = Tokenizer::new(r"\U{1}\U{12}\U{123}\U{1234}\U{12345}");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::Literal('\x01'),
             TokenKind::Literal('\x12'),
             TokenKind::Literal('\u{0123}'),
             TokenKind::Literal('\u{1234}'),
             TokenKind::Literal('\u{012345}'),
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
     }
 
     #[test]
     fn test_unicode_properties() {
         // Check that unicode property classes work
         let tr = Tokenizer::new(r"\pL\PN\p{Mn}\P{sc!=Greek}");
-        assert_tokens(tr, vec![
+        let expected = vec![
             TokenKind::UnicodeShort('L', false),
             TokenKind::UnicodeShort('N', true),
             TokenKind::UnicodeLongStart(false),
@@ -1316,6 +1506,45 @@ mod tests {
             TokenKind::UnicodeEqual(true),
             TokenKind::UnicodePropValue(String::from("Greek")),
             TokenKind::UnicodeLongEnd,
-        ]);
+        ];
+
+        assert_tokens(tr, expected);
+    }
+
+    #[test]
+    fn test_iter_basic() {
+        let tr = Tokenizer::new(r"a(b[c-d]{1,2})$");
+        let kinds = tr
+            .filter_map(|tok_result| tok_result.map(|tok| tok.kind).ok())
+            .collect::<Vec<TokenKind>>();
+
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Literal('a'),
+                TokenKind::OpenGroup,
+                TokenKind::Literal('b'),
+                TokenKind::OpenBracket,
+                TokenKind::Literal('c'),
+                TokenKind::Range,
+                TokenKind::Literal('d'),
+                TokenKind::CloseBracket,
+                TokenKind::OpenBrace,
+                TokenKind::Number(1),
+                TokenKind::Comma,
+                TokenKind::Number(2),
+                TokenKind::CloseBrace,
+                TokenKind::CloseGroup,
+                TokenKind::EndOfLine,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_iter_error() {
+        let mut tr = Tokenizer::new(r"{");
+        assert_next_tok!(tr, TokenKind::OpenBrace);
+        assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
+        assert_next_none!(tr);
     }
 }

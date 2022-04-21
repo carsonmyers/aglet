@@ -1,29 +1,27 @@
 use std::fmt;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Span {
     pub start: Position,
-    pub end: Position,
+    pub end:   Position,
 }
 
 impl Span {
     pub fn new() -> Self {
         Span {
             start: Position::new(),
-            end: Position::new(),
+            end:   Position::new(),
         }
     }
 
     pub fn from_offsets(start: usize, end: usize) -> Self {
         Span {
             start: Position::from_offset(start),
-            end: Position::from_offset(end),
+            end:   Position::from_offset(end),
         }
     }
 
-    pub fn from(start: Position, end: Position) -> Self {
-        Span { start, end }
-    }
+    pub fn from(start: Position, end: Position) -> Self { Span { start, end } }
 }
 
 impl fmt::Debug for Span {
@@ -32,10 +30,10 @@ impl fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Position {
     pub offset: usize,
-    pub line: usize,
+    pub line:   usize,
     pub column: usize,
 }
 
@@ -43,7 +41,7 @@ impl Position {
     pub fn new() -> Self {
         Position {
             offset: 0,
-            line: 1,
+            line:   1,
             column: 1,
         }
     }

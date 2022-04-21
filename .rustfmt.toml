@@ -1,0 +1,9 @@
+fn_single_line = true
+hex_literal_case = "Upper"
+imports_layout = "HorizontalVertical"
+match_block_trailing_comma = true
+imports_granulatiry = "Module"
+group_imports = "StdExternalCrate"
+report_fixme = "Unnumbered"
+report_todo = "Unnumbered"
+struct_field_align_threshold = 50
