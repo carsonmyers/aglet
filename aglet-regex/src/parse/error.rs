@@ -1,31 +1,35 @@
-use thiserror::Error;
 use std::result;
 
-pub type Result<T> = result::Result<T, TokenizeError>;
+use aglet_text::Span;
+use thiserror::Error;
 
-#[derive(Error, Debug, Eq, PartialEq)]
-pub enum TokenizeError {
-    #[error("end of file")]
-    EndOfFile,
+use crate::tokenize::TokenizeError;
 
-    #[error("unexpected `{0}`")]
-    UnexpectedChar(char),
+pub type Result<T> = result::Result<T, ParseError>;
 
-    #[error("state stack is empty")]
-    EmptyStateStack,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseError {
+    pub span: Span,
+    pub kind: ErrorKind,
+}
 
-    #[error("invalid hex digit `{0}`")]
-    InvalidHexDigit(char),
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
+pub enum ErrorKind {
+    #[error("tokenize error: {0}")]
+    TokenizeError(TokenizeError),
 
-    #[error("invalid character code `{0}`")]
-    InvalidCharCode(String),
-
-    #[error("unrecognized escape sequence: \\{0}")]
-    UnrecognizedEscape(char),
-
-    #[error("unrecognized flag: {0}")]
-    UnrecognizedFlag(char),
+    #[error("internal state error: {0}")]
+    InternalStateError(StateError),
 
     #[error("not implemented")]
     NotImplemented,
+}
+
+#[derive(Error, CLone, Debug, Eq, PartialEq)]
+pub enum StateError {
+    #[error("no state on tokenizer stack")]
+    NoStateOnStack,
+
+    #[error("cannot pop final state from tokenizer stack")]
+    PoppedFinalState,
 }

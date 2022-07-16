@@ -7,13 +7,13 @@ pub(crate) struct StateStack {
 }
 
 impl StateStack {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         StateStack {
             stack: vec![StateFlags::default()],
         }
     }
 
-    pub fn push(&mut self, state: State) {
+    pub(crate) fn push(&mut self, state: State) {
         let flags = self
             .stack
             .last()
@@ -23,7 +23,7 @@ impl StateStack {
         self.stack.push(StateFlags { state, flags });
     }
 
-    pub fn swap(&mut self, state: State) -> Result<State, StateError> {
+    pub(crate) fn swap(&mut self, state: State) -> Result<State, StateError> {
         let former = self.stack.pop().ok_or(StateError::NoStateOnStack)?;
         let flags = former.flags.clone();
 
@@ -31,7 +31,7 @@ impl StateStack {
         Ok(former.state)
     }
 
-    pub fn pop(&mut self) -> Result<State, StateError> {
+    pub(crate) fn pop(&mut self) -> Result<State, StateError> {
         if self.stack.len() == 1 {
             return Err(StateError::PoppedFinalState);
         }
@@ -42,7 +42,7 @@ impl StateStack {
             .ok_or(StateError::NoStateOnStack)
     }
 
-    pub fn pop_all(&mut self) -> Result<(), StateError> {
+    pub(crate) fn pop_all(&mut self) -> Result<(), StateError> {
         if self.stack.len() == 1 {
             return Err(StateError::PoppedFinalState);
         }
@@ -53,19 +53,19 @@ impl StateStack {
         Ok(())
     }
 
-    pub fn flags(&self) -> Result<&Flags, StateError> {
+    pub(crate) fn flags(&self) -> Result<&Flags, StateError> {
         let top = self.stack.last().ok_or(StateError::NoStateOnStack)?;
 
         Ok(&top.flags)
     }
 
-    pub fn flags_mut(&mut self) -> Result<&mut Flags, StateError> {
+    pub(crate) fn flags_mut(&mut self) -> Result<&mut Flags, StateError> {
         let top = self.stack.last_mut().ok_or(StateError::NoStateOnStack)?;
 
         Ok(&mut top.flags)
     }
 
-    pub fn get(&self) -> Result<&State, StateError> {
+    pub(crate) fn get(&self) -> Result<&State, StateError> {
         self.stack
             .last()
             .map(|sf| &sf.state)
