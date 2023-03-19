@@ -25,7 +25,7 @@ pub enum TokenKind {
     // Repetition
     OpenBrace,
     CloseBrace,
-    Number(u32),
+    Number(usize),
     Comma,
     Question,
     Star,

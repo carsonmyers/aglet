@@ -126,14 +126,32 @@ impl<'a> Parser<'a> {
     ///     | item repetition-spec
     ///     | item
     fn parse_repetition(&mut self) -> Result<Option<Expr>> {
-        unimplemented!()
+        let Some(item) = self.parse_item()? else {
+            return Ok(None);
+        };
+
+        if let Some(kind) = self.parse_repetition_spec()? {
+            let span = Span::from(item.span.start, self.input.position());
+            let repetition = Repetition {
+                span,
+                kind,
+                item: Box::new(item),
+            };
+
+            Ok(Some(Expr {
+                span,
+                kind: ExprKind::Repetition(repetition),
+            }))
+        } else {
+            Ok(Some(item))
+        }
     }
 
     /// repetition_spec ->
-    ///     | repetition_range
     ///     | QUESTION
     ///     | STAR
     ///     | PLUS
+    ///     | repetition_range
     /// repetition_range ->
     ///     | '{' repetition_range_contents '}'
     /// repetition_range_contents ->
@@ -141,7 +159,56 @@ impl<'a> Parser<'a> {
     ///     | NUMBER ','
     ///     | ',' NUMBER
     fn parse_repetition_spec(&mut self) -> Result<Option<RepetitionKind>> {
-        unimplemented!()
+        let res = parse_alts![
+            { self.parse_question() }
+            { self.parse_star() }
+            { self.parse_plus() }
+            { self.parse_repetition_range() }
+        ];
+
+        Ok(res)
+    }
+
+    fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
+        match_tok!(self.input; _, TokenKind::Question);
+
+        Ok(Some(RepetitionKind::ZeroOrOne))
+    }
+
+    fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
+        match_tok!(self.input; _, TokenKind::Star);
+
+        Ok(Some(RepetitionKind::ZeroOrMore))
+    }
+
+    fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
+        match_tok!(self.input; _, TokenKind::Plus);
+
+        Ok(Some(RepetitionKind::OneOrMore))
+    }
+
+    fn parse_repetition_range(&mut self) -> Result<Option<RepetitionKind>> {
+        match_tok!(self.input; span_start, TokenKind::OpenBrace);
+
+        let mut start: Option<usize> = None;
+        let mut end: Option<usize> = None;
+
+        matches_tok!(self.input; TokenKind::Number(number), |_| {
+            start = Some(number);
+            Ok(())
+        });
+
+        expect_tok!(self.input, "comma `,`"; _, TokenKind::Comma);
+
+        matches_tok!(self.input; TokenKind::Number(number), |_| {
+            end = Some(number);
+            Ok(())
+        });
+
+        expect_tok!(self.input, "end of range `}`"; span_end, TokenKind::CloseBrace);
+
+        let span = Span::wrap(span_start, span_end);
+        Ok(Some(RepetitionKind::Range(Range { span, start, end })))
     }
 
     /// item ->
@@ -658,9 +725,7 @@ mod tests {
 
     #[test]
     fn parse_class() {
-        let mut tr = Tokenizer::new(r"\pL[^abc]+");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"\pL[^abc]+");
         let mut p = Parser::new(tr);
 
         let class = get_class(p.parse_class());
@@ -687,9 +752,7 @@ mod tests {
 
     #[test]
     fn unicode_class() {
-        let mut tr = Tokenizer::new(r"\pL\p{Letter}\x5A");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"\pL\p{Letter}\x5A");
         let mut p = Parser::new(tr);
 
         let class = get_unicode_class(get_class(p.parse_unicode_class()));
@@ -706,9 +769,7 @@ mod tests {
 
     #[test]
     fn unicode_short_class() {
-        let mut tr = Tokenizer::new(r"\pL\PL\p{Letter}");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"\pL\PL\p{Letter}");
         let mut p = Parser::new(tr);
 
         let class = get_class(p.parse_unicode_short_class());
@@ -727,9 +788,7 @@ mod tests {
 
     #[test]
     fn unicode_long_class() {
-        let mut tr = Tokenizer::new(r"\p{Letter}\P{Digit}\p{sc!=Greek}\P{sc=Greek}\PL");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"\p{Letter}\P{Digit}\p{sc!=Greek}\P{sc=Greek}\PL");
         let mut p = Parser::new(tr);
 
         let class = get_class(p.parse_unicode_long_class());
@@ -764,9 +823,7 @@ mod tests {
 
     #[test]
     fn specified_class() {
-        let mut tr = Tokenizer::new(r"[abc][^abc]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[abc][^abc]");
         let mut p = Parser::new(tr);
 
         let class = get_class(p.parse_specified_class());
@@ -812,9 +869,7 @@ mod tests {
 
     #[test]
     fn spec_class_item() {
-        let mut tr = Tokenizer::new(r"[a-z&&\x63~~Q]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[a-z&&\x63~~Q]");
         let mut p = Parser::new(tr.skip(1));
         let spec = get_class_spec(p.parse_specified_class_item());
 
@@ -836,9 +891,7 @@ mod tests {
 
     #[test]
     fn class_term() {
-        let mut tr = Tokenizer::new(r"[ab-z[:alpha:][abc]\x63-\x6A]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[ab-z[:alpha:][abc]\x63-\x6A]");
         let mut p = Parser::new(tr.skip(1));
 
         let spec = get_class_spec(p.parse_specified_class_term());
@@ -871,9 +924,7 @@ mod tests {
 
     #[test]
     fn class_term_literal() {
-        let mut tr = Tokenizer::new(r"[ab-cd-]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[ab-cd-]");
         let mut p = Parser::new(tr.skip(1));
 
         let spec = get_class_spec(p.parse_class_term_literal());
@@ -891,9 +942,7 @@ mod tests {
 
     #[test]
     fn class_term_bracket() {
-        let mut tr = Tokenizer::new(r"[[:xdigit:][abc]a]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[[:xdigit:][abc]a]");
         let mut p = Parser::new(tr.skip(1));
 
         let spec = get_class_spec(p.parse_class_term_bracket());
@@ -925,10 +974,7 @@ mod tests {
             kind: ClassSpecKind::Literal('c'),
         };
 
-        let mut tr = Tokenizer::new(r"[a~~a-z--z]");
-        tr.set_debug();
-
-        // skip to the beginning of the set operator
+        let tr = Tokenizer::new(r"[a~~a-z--z]");
         let mut p = Parser::new(tr.skip(2));
 
         let Ok(spec) = p.parse_class_item_set(lhs) else {

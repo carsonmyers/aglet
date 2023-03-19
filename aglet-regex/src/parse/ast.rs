@@ -50,7 +50,13 @@ pub enum RepetitionKind {
     ZeroOrOne,
     ZeroOrMore,
     OneOrMore,
-    Range(Option<usize>, Option<usize>),
+    Range(Range),
+}
+
+pub struct Range {
+    pub span:  Span,
+    pub start: Option<usize>,
+    pub end:   Option<usize>,
 }
 
 impl TryFrom<TokenKind> for RepetitionKind {

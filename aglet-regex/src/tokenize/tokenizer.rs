@@ -40,7 +40,7 @@ impl<'a> Tokenizer<'a> {
             state:            StateStack::new(),
             last_token_kind:  None,
             print_debug_info: false,
-            dbgout:           StandardStream::stderr(ColorChoice::Always),
+            dbgout:           StandardStream::stdout(ColorChoice::Always),
         }
     }
 
@@ -123,6 +123,8 @@ impl<'a> Tokenizer<'a> {
                     format!("{:?}", &err.kind),
                     self.state
                 );
+
+                let _ = self.dbgout.set_color(&ColorSpec::new());
             }
         }
 
@@ -926,7 +928,7 @@ impl<'a> Tokenizer<'a> {
         // This function is only for parsing the number, so a number should
         // always be the output. Parse the input as an unsigned integer
         let value = number
-            .parse::<u32>()
+            .parse::<usize>()
             .expect(&format!("accepted invalid number: {}", number));
 
         Ok(self.input.token(TokenKind::Number(value)))
@@ -1315,9 +1317,7 @@ mod tests {
 
     #[test]
     fn posix_class() {
-        let mut tr = Tokenizer::new(r"[:a:][[:a:]a-z]");
-        tr.set_debug();
-
+        let tr = Tokenizer::new(r"[:a:][[:a:]a-z]");
         let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::Literal(':'),
@@ -1357,6 +1357,10 @@ mod tests {
             TokenKind::ClassName(String::from("alnum"), false),
             TokenKind::CloseBracket,
             TokenKind::CloseBracket,
+            TokenKind::Intersection,
+            TokenKind::Literal('a'),
+            TokenKind::Range,
+            TokenKind::Literal('z'),
             TokenKind::CloseBracket,
         ];
 

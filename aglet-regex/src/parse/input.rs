@@ -23,6 +23,10 @@ impl<'a> Input<'a> {
         }
     }
 
+    pub fn position(&self) -> Position {
+        self.span.end;
+    }
+
     pub fn peek(&mut self) -> Option<Result<&Token>> {
         match self.data.peek() {
             None => None,
