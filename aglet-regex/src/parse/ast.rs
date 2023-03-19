@@ -7,14 +7,16 @@ use crate::tokenize::TokenKind;
 
 #[derive(Default)]
 pub struct Ast {
-    pub head: Option<Expr>,
+    pub head: Expr,
 }
 
+#[derive(Default)]
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
 }
 
+#[derive(Default)]
 pub enum ExprKind {
     Alternation(Alternation),
     Concatenation(Vec<Expr>),
@@ -24,6 +26,8 @@ pub enum ExprKind {
     Boundary(Boundary),
     Group(Group),
     Class(Class),
+    #[default]
+    Empty,
 }
 
 pub struct Alternation {
@@ -95,13 +99,63 @@ impl TryFrom<TokenKind> for BoundaryKind {
 pub struct Group {
     pub span: Span,
     pub kind: GroupKind,
-    pub expr: Box<Expr>,
 }
 
 pub enum GroupKind {
-    Capturing(usize),
-    Named(StringSpan),
-    NonCapturing,
+    Capturing(CapturingGroup),
+    Named(NamedGroup),
+    NonCapturing(NonCapturingGroup),
+    Flags(FlagsGroup),
+}
+
+pub struct CapturingGroup {
+    pub index: usize,
+    pub expr:  Box<Expr>,
+}
+
+pub struct NamedGroup {
+    pub name: StringSpan,
+    pub expr: Box<Expr>,
+}
+
+pub struct NonCapturingGroup {
+    pub flags: Option<Flags>,
+    pub expr:  Box<Expr>,
+}
+
+pub struct FlagsGroup {
+    pub flags: Flags,
+}
+
+pub struct Flags {
+    pub span:        Span,
+    pub set_flags:   Vec<FlagKind>,
+    pub clear_flags: Vec<FlagKind>,
+}
+
+pub enum FlagKind {
+    CaseInsensitive,
+    MultiLine,
+    DotMatchesNewline,
+    SwapGreed,
+    Unicode,
+    IgnoreWhitespace,
+}
+
+impl TryFrom<char> for FlagKind {
+    type Error = TokenConvertError;
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            'i' => Ok(Self::CaseInsensitive),
+            'm' => Ok(Self::MultiLine),
+            's' => Ok(Self::DotMatchesNewline),
+            'U' => Ok(Self::SwapGreed),
+            'u' => Ok(Self::Unicode),
+            'x' => Ok(Self::IgnoreWhitespace),
+            _ => Err(TokenConvertError::InvalidFlag(value)),
+        }
+    }
 }
 
 pub struct Class {

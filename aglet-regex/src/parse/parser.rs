@@ -8,7 +8,8 @@ use crate::parse::input::{expect_tok, match_one, match_tok, matches_one, matches
 use crate::tokenize::{self, Token, TokenKind};
 
 pub struct Parser<'a> {
-    input: Input<'a>,
+    input:       Input<'a>,
+    group_index: usize,
 }
 
 /// Parse a regular expression from a token stream
@@ -58,9 +59,9 @@ pub struct Parser<'a> {
 ///     | '[' specified_class ']'
 /// unicode_class ->
 ///     | UNICODE_SHORT
-///     | '{' UNICODE_PROP_VALUE '}'
-///     | '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-///     | '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
+///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
+///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
+///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
 /// specified_class ->
 ///     | NEGATED class_spec
 ///     | class_spec
@@ -86,8 +87,15 @@ impl<'a> Parser<'a> {
         T: Iterator<Item = tokenize::Result<Token>> + 'a,
     {
         Parser {
-            input: Input::new(input),
+            input:       Input::new(input),
+            group_index: 1,
         }
+    }
+
+    pub fn next_group_index(&mut self) -> usize {
+        let index = self.group_index;
+        self.group_index += 1;
+        index
     }
 
     pub fn parse(mut self) -> Result<Ast> {
@@ -96,7 +104,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_expr(&mut self) -> Result<Option<Expr>> {
+    fn parse_expr(&mut self) -> Result<Expr> {
         unimplemented!()
     }
 
@@ -143,13 +151,63 @@ impl<'a> Parser<'a> {
     ///     | group
     ///     | class
     fn parse_item(&mut self) -> Result<Option<Expr>> {
-        unimplemented!()
+        let res = parse_alts![
+            { self.parse_dot() }
+            { self.parse_literal() }
+            { self.parse_boundary() }
+            { self.parse_group() }
+            { self.parse_class() }
+        ];
+
+        Ok(res)
+    }
+
+    fn parse_dot(&mut self) -> Result<Option<Expr>> {
+        match_tok!(self.input; span, TokenKind::Dot);
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Any,
+        }))
+    }
+
+    fn parse_literal(&mut self) -> Result<Option<Expr>> {
+        match_tok!(self.input; span, TokenKind::Literal(c));
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Literal(c),
+        }))
+    }
+
+    fn parse_boundary(&mut self) -> Result<Option<Expr>> {
+        let tok = match_tok!(self.input; TokenKind::is_boundary);
+
+        let span = tok.span;
+        let kind = match BoundaryKind::try_from(tok.kind) {
+            Ok(kind) => Ok(kind),
+            Err(err) => Err(self.input.error(ErrorKind::TokenConvertError(err))),
+        }?;
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Boundary(Boundary { span, kind }),
+        }))
     }
 
     /// group ->
     ///     | '(' group_contents ')'
     fn parse_group(&mut self) -> Result<Option<Expr>> {
-        unimplemented!()
+        match_tok!(self.input; span_start, TokenKind::OpenGroup);
+        let kind = self.parse_group_contents()?;
+        expect_tok!(self.input, "end of group `)`"; span_end, TokenKind::CloseGroup);
+
+        let span = Span::wrap(span_start, span_end);
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Group(Group { span, kind }),
+        }))
     }
 
     /// group_contents ->
@@ -157,9 +215,93 @@ impl<'a> Parser<'a> {
     ///     | NON_CAPTURING_FLAGS expr
     ///     | GROUP_NAME expr
     ///     | FLAGS
-    ///     | \e
-    fn parse_group_contents(&mut self) -> Result<Option<GroupKind>> {
-        unimplemented!()
+    ///     | expr
+    fn parse_group_contents(&mut self) -> Result<GroupKind> {
+        let res = parse_alts![
+            { self.parse_non_capturing_group() }
+            { self.parse_non_capturing_flags_group() }
+            { self.parse_named_group() }
+            { self.parse_flags_group() }
+            { self.parse_capturing_group() }
+        ]
+        .expect("group contents should not be None");
+
+        Ok(res)
+    }
+
+    fn parse_non_capturing_group(&mut self) -> Result<Option<GroupKind>> {
+        match_tok!(self.input; _, TokenKind::NonCapturing);
+        let expr = self.parse_expr()?;
+
+        Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
+            flags: None,
+            expr:  Box::new(expr),
+        })))
+    }
+
+    fn parse_non_capturing_flags_group(&mut self) -> Result<Option<GroupKind>> {
+        match_tok!(self.input; span, TokenKind::NonCapturingFlags(set_flags, clear_flags));
+        let expr = self.parse_expr()?;
+
+        let set_flags = self.parse_flags(set_flags)?;
+        let clear_flags = self.parse_flags(clear_flags)?;
+
+        Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
+            flags: Some(Flags {
+                span,
+                set_flags,
+                clear_flags,
+            }),
+            expr:  Box::new(expr),
+        })))
+    }
+
+    fn parse_named_group(&mut self) -> Result<Option<GroupKind>> {
+        match_tok!(self.input; span, TokenKind::Name(name));
+        let expr = self.parse_expr()?;
+
+        let name = StringSpan { span, value: name };
+
+        Ok(Some(GroupKind::Named(NamedGroup {
+            name,
+            expr: Box::new(expr),
+        })))
+    }
+
+    fn parse_flags_group(&mut self) -> Result<Option<GroupKind>> {
+        match_tok!(self.input; span, TokenKind::Flags(set_flags, clear_flags));
+
+        let set_flags = self.parse_flags(set_flags)?;
+        let clear_flags = self.parse_flags(clear_flags)?;
+
+        Ok(Some(GroupKind::Flags(FlagsGroup {
+            flags: Flags {
+                span,
+                set_flags,
+                clear_flags,
+            },
+        })))
+    }
+
+    fn parse_capturing_group(&mut self) -> Result<Option<GroupKind>> {
+        let expr = self.parse_expr()?;
+
+        Ok(Some(GroupKind::Capturing(CapturingGroup {
+            index: self.next_group_index(),
+            expr:  Box::new(expr),
+        })))
+    }
+
+    fn parse_flags(&self, input_flags: Vec<char>) -> Result<Vec<FlagKind>> {
+        let res = input_flags
+            .into_iter()
+            .map(FlagKind::try_from)
+            .collect::<std::result::Result<Vec<_>, _>>();
+
+        match res {
+            Ok(flags) => Ok(flags),
+            Err(err) => Err(self.input.error(ErrorKind::TokenConvertError(err))),
+        }
     }
 
     /// class ->
@@ -176,9 +318,9 @@ impl<'a> Parser<'a> {
 
     /// unicode_class ->
     ///     | UNICODE_SHORT
-    ///     | '{' UNICODE_PROP_VALUE '}'
-    ///     | '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-    ///     | '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
     fn parse_unicode_class(&mut self) -> Result<Option<Expr>> {
         let res = parse_alts![
             { self.parse_unicode_short_class() }
@@ -349,6 +491,18 @@ impl<'a> Parser<'a> {
         Ok(spec)
     }
 
+    /// Parse a specified class item that begins with an opening bracket
+    ///
+    /// This includes parsing a nested class. [`parse_specified_class`] can't really be reused
+    /// here because it needs to consume the first bracket - here the bracket is consumed so that
+    /// the beginning of POSIX_NAME can be peeked to disambiguate the two productions; once the
+    /// branch has been determined, control can't be passed to [`parse_specified_class`] because
+    /// the bracket was already consumed.
+    ///
+    /// Inverting this dependency and making [`parse_specified_class`] assume the bracket was
+    /// already consumed doesn't work that well because that token is needed to compute the
+    /// ast node's span.
+    ///
     /// spec_term ->
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
