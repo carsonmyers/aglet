@@ -112,6 +112,10 @@ impl<'a> Parser<'a> {
     ///     | concatenation '|' alternation
     ///     | concatenation
     fn parse_alternation(&mut self) -> Result<Option<Expr>> {
+        let Some(item) = self.parse_concatenation()? else {
+            return Ok(None)
+        };
+
         unimplemented!()
     }
 
@@ -119,7 +123,23 @@ impl<'a> Parser<'a> {
     ///     | repetition concatination
     ///     | repetition
     fn parse_concatenation(&mut self) -> Result<Option<Expr>> {
-        unimplemented!()
+        let mut items = Vec::new();
+
+        while let Some(item) = self.parse_repetition()? {
+            items.push(item);
+        }
+
+        if items.len() == 0 {
+            Ok(None)
+        } else if items.len() == 1 {
+            Ok(Some(items[0]))
+        } else {
+            let span = Span::wrap(items[0].span, items[items.len() - 1].span);
+            Ok(Some(Expr {
+                span,
+                kind: ExprKind::Concatenation(items),
+            }))
+        }
     }
 
     /// repetition ->
