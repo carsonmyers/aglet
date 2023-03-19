@@ -104,19 +104,53 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// expr ->
+    ///     | alternation
+    ///     | \e
     fn parse_expr(&mut self) -> Result<Expr> {
-        unimplemented!()
+        if let Some(expr) = self.parse_alternation()? {
+            Ok(expr)
+        } else {
+            let span = Span::from(self.input.position(), self.input.position());
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Empty,
+            });
+        }
     }
 
     /// alternation ->
     ///     | concatenation '|' alternation
     ///     | concatenation
     fn parse_alternation(&mut self) -> Result<Option<Expr>> {
-        let Some(item) = self.parse_concatenation()? else {
-            return Ok(None)
-        };
+        let mut items = Vec::new();
 
-        unimplemented!()
+        loop {
+            let item = match self.parse_concatenation()? {
+                Some(item) => item,
+                None => Expr {
+                    span: Span::from(self.input.position(), self.input.position()),
+                    kind: ExprKind::Empty,
+                },
+            };
+
+            items.push(item);
+
+            let matched_pipe = matches_tok!(self.input; TokenKind::Alternate);
+            if !matched_pipe {
+                break;
+            }
+        }
+
+        if items.len() > 1 {
+            let span = Span::wrap(items[0].span, items[items.len() - 1].span);
+            Ok(Some(Expr {
+                span,
+                kind: ExprKind::Alternation(Alternation { span, items }),
+            }))
+        } else {
+            Ok(items.pop())
+        }
     }
 
     /// concatenation ->
@@ -129,16 +163,14 @@ impl<'a> Parser<'a> {
             items.push(item);
         }
 
-        if items.len() == 0 {
-            Ok(None)
-        } else if items.len() == 1 {
-            Ok(Some(items[0]))
-        } else {
+        if items.len() > 1 {
             let span = Span::wrap(items[0].span, items[items.len() - 1].span);
             Ok(Some(Expr {
                 span,
-                kind: ExprKind::Concatenation(items),
+                kind: ExprKind::Concatenation(Concatenation { span, items }),
             }))
+        } else {
+            Ok(items.pop())
         }
     }
 

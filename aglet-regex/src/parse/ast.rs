@@ -19,7 +19,7 @@ pub struct Expr {
 #[derive(Default)]
 pub enum ExprKind {
     Alternation(Alternation),
-    Concatenation(Vec<Expr>),
+    Concatenation(Concatenation),
     Repetition(Repetition),
     Any,
     Literal(char),
@@ -32,12 +32,12 @@ pub enum ExprKind {
 
 pub struct Alternation {
     pub span:  Span,
-    pub exprs: Vec<Expr>,
+    pub items: Vec<Expr>,
 }
 
 pub struct Concatenation {
     pub span:  Span,
-    pub exprs: Vec<Expr>,
+    pub items: Vec<Expr>,
 }
 
 pub struct Repetition {
