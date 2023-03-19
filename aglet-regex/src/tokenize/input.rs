@@ -21,7 +21,9 @@ impl<'a> Input<'a> {
         }
     }
 
-    pub fn peek(&mut self) -> Option<char> { self.data.peek().map(|c| *c) }
+    pub fn peek(&mut self) -> Option<char> {
+        self.data.peek().map(|c| *c)
+    }
 
     pub fn next(&mut self) -> Option<char> {
         if let Some(c) = self.data.next() {
@@ -44,11 +46,11 @@ impl<'a> Input<'a> {
         Token { span, kind }
     }
 
-    pub fn error(&mut self, kind: ErrorKind) -> TokenizeError {
+    pub fn error(&mut self, kind: ErrorKind) -> Error {
         let span = Span::from(self.t, self.n);
         self.t.set(&self.n);
 
-        TokenizeError { span, kind }
+        Error { span, kind }
     }
 
     pub fn expect(&mut self, c: char) -> Result<()> {

@@ -1,4 +1,3 @@
-fn_single_line = true
 hex_literal_case = "Upper"
 imports_layout = "HorizontalVertical"
 match_block_trailing_comma = true

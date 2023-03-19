@@ -11,7 +11,7 @@ pub struct Token {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TokenKind {
     Literal(char),
-    Any,
+    Dot,
     Alternate,
 
     // Boundaries
@@ -28,8 +28,8 @@ pub enum TokenKind {
     Number(u32),
     Comma,
     Question,
-    ZeroOrMore,
-    OneOrMore,
+    Star,
+    Plus,
 
     // Groups
     OpenGroup,
@@ -65,6 +65,52 @@ impl Token {
             kind,
             span: Span::from_offsets(start, end),
         }
+    }
+}
+
+impl TokenKind {
+    pub fn is_literal(&self) -> bool {
+        matches!(self, TokenKind::Literal(_))
+    }
+
+    pub fn is_any(&self) -> bool {
+        matches!(self, TokenKind::Dot)
+    }
+
+    pub fn is_alternate(&self) -> bool {
+        matches!(self, TokenKind::Alternate)
+    }
+
+    pub fn is_boundary(&self) -> bool {
+        match self {
+            TokenKind::StartOfLine
+            | TokenKind::EndOfLine
+            | TokenKind::StartOfText
+            | TokenKind::EndOfText
+            | TokenKind::WordBoundary
+            | TokenKind::NonWordBoundary => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_range(&self) -> bool {
+        matches!(self, TokenKind::Range)
+    }
+
+    pub fn is_range_symmetrical(&self) -> bool {
+        matches!(self, TokenKind::RangeSymmetrical)
+    }
+
+    pub fn is_range_difference(&self) -> bool {
+        matches!(self, TokenKind::RangeDifference)
+    }
+
+    pub fn is_range_intersection(&self) -> bool {
+        matches!(self, TokenKind::RangeIntersection)
+    }
+
+    pub fn is_class_name(&self) -> bool {
+        matches!(self, TokenKind::ClassName(_, _))
     }
 }
 

@@ -4,7 +4,7 @@ pub(crate) mod state;
 pub mod token;
 pub mod tokenizer;
 
-pub use error::{ErrorKind, Result, TokenizeError};
+pub use error::{Error, ErrorKind, Result};
 pub use token::{Token, TokenKind};
 pub use tokenizer::Tokenizer;
 
@@ -41,7 +41,7 @@ macro_rules! assert_next_err {
     ( $tokenizer:expr , $kind:pat ) => {
         assert!(matches!(
             $tokenizer.next(),
-            Some(Err(TokenizeError { kind: $kind, .. }))
+            Some(Err(Error { kind: $kind, .. }))
         ));
     };
 }

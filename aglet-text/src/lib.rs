@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Default)]
 pub struct Span {
     pub start: Position,
     pub end:   Position,
@@ -21,7 +21,16 @@ impl Span {
         }
     }
 
-    pub fn from(start: Position, end: Position) -> Self { Span { start, end } }
+    pub fn from(start: Position, end: Position) -> Self {
+        Span { start, end }
+    }
+
+    pub fn wrap(start: Span, end: Span) -> Self {
+        Span {
+            start: start.start,
+            end:   end.end,
+        }
+    }
 }
 
 impl fmt::Debug for Span {
@@ -30,7 +39,7 @@ impl fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Default)]
 pub struct Position {
     pub offset: usize,
     pub line:   usize,

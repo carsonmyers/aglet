@@ -1,17 +1,16 @@
 use std::result;
 
 use aglet_text::Span;
-use thiserror::Error;
 
-pub type Result<T> = result::Result<T, TokenizeError>;
+pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenizeError {
+pub struct Error {
     pub span: Span,
     pub kind: ErrorKind,
 }
 
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     #[error("end of file")]
     EndOfFile,
@@ -48,7 +47,7 @@ impl From<StateError> for ErrorKind {
     fn from(err: StateError) -> Self { ErrorKind::InternalStateError(err) }
 }
 
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub enum StateError {
     #[error("no state on tokenizer stack")]
     NoStateOnStack,

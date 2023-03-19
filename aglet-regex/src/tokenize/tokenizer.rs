@@ -64,7 +64,9 @@ impl<'a> Tokenizer<'a> {
     /// // !!!                            Err(EndOfFile)                 -> [State(Main, [])]
     /// let _ = tr.next_token();
     /// ```
-    pub fn set_debug(&mut self) { self.print_debug_info = true; }
+    pub fn set_debug(&mut self) {
+        self.print_debug_info = true;
+    }
 
     /// Get the next token from the input. A token includes both the kind of the
     /// token along with the kind's associated data (e.g. a literal includes the
@@ -148,10 +150,10 @@ impl<'a> Tokenizer<'a> {
         match self.input.next() {
             Some('^') => Ok(self.input.token(TokenKind::StartOfLine)),
             Some('$') => Ok(self.input.token(TokenKind::EndOfLine)),
-            Some('.') => Ok(self.input.token(TokenKind::Any)),
+            Some('.') => Ok(self.input.token(TokenKind::Dot)),
             Some('?') => Ok(self.input.token(TokenKind::Question)),
-            Some('*') => Ok(self.input.token(TokenKind::ZeroOrMore)),
-            Some('+') => Ok(self.input.token(TokenKind::OneOrMore)),
+            Some('*') => Ok(self.input.token(TokenKind::Star)),
+            Some('+') => Ok(self.input.token(TokenKind::Plus)),
             Some('|') => Ok(self.input.token(TokenKind::Alternate)),
 
             // The `(` token enters the group parsing state, e.g. `(?:abc)`
@@ -373,7 +375,7 @@ impl<'a> Tokenizer<'a> {
         }
 
         self.state
-            .pop()
+            .swap(State::Class)
             .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
         Ok(self.input.token(TokenKind::ClassName(name, negated)))
     }
@@ -968,7 +970,7 @@ impl<'a> iter::Iterator for Tokenizer<'a> {
     type Item = Result<Token>;
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
-            Err(TokenizeError {
+            Err(Error {
                 kind: ErrorKind::EndOfFile,
                 ..
             }) => None,
@@ -983,7 +985,7 @@ mod tests {
     use crate::tokenize::assert_tokens;
 
     #[test]
-    fn test_simple_main() {
+    fn simple_main() {
         // Check the basic tokens in the main state
         let tr = Tokenizer::new(r"a^$.?*+|()]}");
         assert_tokens(
@@ -992,10 +994,10 @@ mod tests {
                 TokenKind::Literal('a'),
                 TokenKind::StartOfLine,
                 TokenKind::EndOfLine,
-                TokenKind::Any,
+                TokenKind::Dot,
                 TokenKind::Question,
-                TokenKind::ZeroOrMore,
-                TokenKind::OneOrMore,
+                TokenKind::Star,
+                TokenKind::Plus,
                 TokenKind::Alternate,
                 TokenKind::OpenGroup,
                 TokenKind::CloseGroup,
@@ -1006,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extra_group_end() {
+    fn extra_group_end() {
         let tr = Tokenizer::new(r"a))");
         let expected = vec![
             TokenKind::Literal('a'),
@@ -1018,13 +1020,13 @@ mod tests {
     }
 
     #[test]
-    fn test_expected_group_end() {
+    fn expected_group_end() {
         let mut tr = Tokenizer::new(r"(");
         assert_next_tok!(tr, TokenKind::OpenGroup);
     }
 
     #[test]
-    fn test_simple_escapes() {
+    fn simple_escapes() {
         let tr = Tokenizer::new(r"\A\z\b\B\a\f\t\n\r\v\d\D\s\S\w\W");
         let expected = vec![
             TokenKind::StartOfText,
@@ -1049,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn test_literal_escapes() {
+    fn literal_escapes() {
         // Check all the literal escapes in the main state
         let tr = Tokenizer::new(r"\^\$\.\?\*\+\|\(\)\[\]\{\}\\");
         let expected = vec![
@@ -1073,7 +1075,7 @@ mod tests {
     }
 
     #[test]
-    fn test_main_escape_errors() {
+    fn main_escape_errors() {
         let mut tr = Tokenizer::new(r"\:");
         assert_next_err!(tr, ErrorKind::UnrecognizedEscape(':'));
         assert_next_none!(tr);
@@ -1101,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn test_class_escape_errors() {
+    fn class_escape_errors() {
         let mut tr = Tokenizer::new(r"[\*");
         assert_next_tok!(tr, TokenKind::OpenBracket);
         assert_next_err!(tr, ErrorKind::UnrecognizedEscape('*'));
@@ -1116,7 +1118,7 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_group() {
+    fn basic_group() {
         // Check basic group functionality
         let tr = Tokenizer::new(r"(a)b");
         let expected = vec![
@@ -1130,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_capturing_group() {
+    fn non_capturing_group() {
         // Test a non-capturing group
         let tr = Tokenizer::new(r"(?:ab)");
         let expected = vec![
@@ -1145,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_named_group() {
+    fn named_group() {
         // Test a named group
         let tr = Tokenizer::new(r"(?P<name>");
         let expected = vec![TokenKind::OpenGroup, TokenKind::Name(String::from("name"))];
@@ -1154,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn test_group_errors() {
+    fn group_errors() {
         let mut tr = Tokenizer::new(r"(?");
         assert_next_tok!(tr, TokenKind::OpenGroup);
         assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
@@ -1177,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flag_group() {
+    fn flag_group() {
         // Test a flags group
         let tr = Tokenizer::new(r"(?isUx)");
         let expected = vec![
@@ -1190,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_capturing_flag_group() {
+    fn non_capturing_flag_group() {
         // Test a non-capturing flags group
         let tr = Tokenizer::new(r"(?mx:a)b");
         let expected = vec![
@@ -1205,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flag_parse() {
+    fn flag_parse() {
         // Test the flags tokens in a variety of configurations
         let tr = Tokenizer::new(r"(?is-Ux)(?-iU:)(?sx-)");
         let expected = vec![
@@ -1224,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn test_linear_flag_settings() {
+    fn linear_flag_settings() {
         // Test that flag ignore_whitespace settings escape the group
         let tr = Tokenizer::new(" a\nb(?x) a\nb(?-x) a\nb");
         let expected = vec![
@@ -1250,7 +1252,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_flag_settings() {
+    fn nested_flag_settings() {
         // Test that ignore_whitespace can be limited to group scope
         let tr = Tokenizer::new("(?x: \nz(?-x: \ny) \nx) \nw");
 
@@ -1275,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn test_comment_skip() {
+    fn comment_skip() {
         // Test that ignore_whitespace will skip comments
         let tr = Tokenizer::new("(?x)#skip this comment\na$");
         let expected = vec![
@@ -1290,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_class() {
+    fn simple_class() {
         // Test basic class tokens
         let tr = Tokenizer::new(r"[^-^a-z-]");
         let expected = vec![
@@ -1309,7 +1311,31 @@ mod tests {
     }
 
     #[test]
-    fn test_class_names_and_differences() {
+    fn posix_class() {
+        let mut tr = Tokenizer::new(r"[:a:][[:a:]a-z]");
+        tr.set_debug();
+
+        let expected = vec![
+            TokenKind::OpenBracket,
+            TokenKind::Literal(':'),
+            TokenKind::Literal('a'),
+            TokenKind::Literal(':'),
+            TokenKind::CloseBracket,
+            TokenKind::OpenBracket,
+            TokenKind::OpenBracket,
+            TokenKind::ClassName(String::from("a"), false),
+            TokenKind::CloseBracket,
+            TokenKind::Literal('a'),
+            TokenKind::Range,
+            TokenKind::Literal('z'),
+            TokenKind::CloseBracket,
+        ];
+
+        assert_tokens(tr, expected);
+    }
+
+    #[test]
+    fn class_names_and_differences() {
         // Test named classes and some difference operators
         let tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:]]]");
         let expected = vec![
@@ -1335,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn test_named_classes_and_bad_negations() {
+    fn named_classes_and_bad_negations() {
         // Test that named class negation works correctly
         let tr = Tokenizer::new(r"[[^:abc:]][:abc:]]]");
         let expected = vec![
@@ -1364,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_class_escapes() {
+    fn class_escapes() {
         // Check that class escapes work correctly
         let tr = Tokenizer::new(r"[\^\&&~\~\]\[[\:a:]\s\W\D\--]");
         let expected = vec![
@@ -1393,7 +1419,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range() {
+    fn range() {
         // Check that basic ranges work correctly with whitespace skipping
         let tr = Tokenizer::new(r"{ 1 , 234 }{,}");
         let expected = vec![
@@ -1411,7 +1437,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_errors() {
+    fn range_errors() {
         let mut tr = Tokenizer::new(r"{:");
         assert_next_tok!(tr, TokenKind::OpenBrace);
         assert_next_err!(tr, ErrorKind::UnexpectedChar(':'));
@@ -1431,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_unicode() {
+    fn basic_unicode() {
         // Check unbraced hex escapes
         let tr = Tokenizer::new(r"\x7F1\u4E2AE\U0000007F0");
         let expected = vec![
@@ -1447,7 +1473,7 @@ mod tests {
     }
 
     #[test]
-    fn test_braced_unicode_x() {
+    fn braced_unicode_x() {
         // Check that braced hex escapes work with \x
         let tr = Tokenizer::new(r"\x{1}\x{12}\x{123}\x{1234}\x{12345}");
         let expected = vec![
@@ -1462,7 +1488,7 @@ mod tests {
     }
 
     #[test]
-    fn test_braced_unicode_u() {
+    fn braced_unicode_u() {
         // Check that braced hex escapes work with \u
         let tr = Tokenizer::new(r"\u{1}\u{12}\u{123}\u{1234}\u{12345}");
         let expected = vec![
@@ -1477,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_braced_unicode_upper_u() {
+    fn braced_unicode_upper_u() {
         // Check that braced hex escapes work with \U
         let tr = Tokenizer::new(r"\U{1}\U{12}\U{123}\U{1234}\U{12345}");
         let expected = vec![
@@ -1492,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unicode_properties() {
+    fn unicode_properties() {
         // Check that unicode property classes work
         let tr = Tokenizer::new(r"\pL\PN\p{Mn}\P{sc!=Greek}");
         let expected = vec![
@@ -1512,7 +1538,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iter_basic() {
+    fn iter_basic() {
         let tr = Tokenizer::new(r"a(b[c-d]{1,2})$");
         let kinds = tr
             .filter_map(|tok_result| tok_result.map(|tok| tok.kind).ok())
@@ -1541,7 +1567,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iter_error() {
+    fn iter_error() {
         let mut tr = Tokenizer::new(r"{");
         assert_next_tok!(tr, TokenKind::OpenBrace);
         assert_next_err!(tr, ErrorKind::UnexpectedEOF(_));
