@@ -53,10 +53,6 @@ impl<'a> Input<'a> {
             kind,
         }
     }
-
-    pub fn error_res<T>(&self, kind: ErrorKind) -> Result<Option<T>> {
-        Err(self.error(kind))
-    }
 }
 
 #[cfg_attr(rustfmt, rustfmt_skip)]

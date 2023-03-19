@@ -1,14 +1,18 @@
-mod parse;
+pub mod parse;
 pub mod tokenize;
 
-use aglet_text::Span;
-use tokenize::token::Token;
+use parse::{ast::Ast, Parser};
+use tokenize::{Token, Tokenizer};
 
-pub fn tokenize<S>(_: &str) -> Result<Vec<Token>, tokenize::Error> {
-    Err(tokenize::Error {
-        span: Span::new(),
-        kind: tokenize::ErrorKind::EndOfFile,
-    })
+pub fn tokenize<S: AsRef<str>>(input: &str) -> Result<Vec<Token>, tokenize::Error> {
+    let tr = Tokenizer::new(input);
+    tr.collect::<Result<Vec<_>, _>>()
+}
+
+pub fn parse<S: AsRef<str>>(input: &str) -> Result<Ast, parse::Error> {
+    let tr = Tokenizer::new(input);
+    let p = Parser::new(tr);
+    p.parse()
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 pub mod ast;
 pub mod error;
-pub(crate) mod input;
+mod input;
 pub mod parser;
-pub(crate) mod state;
 
+pub use error::{Error, ErrorKind};
 pub use parser::Parser;

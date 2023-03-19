@@ -1,6 +1,6 @@
 pub mod error;
-pub(crate) mod input;
-pub(crate) mod state;
+mod input;
+mod state;
 pub mod token;
 pub mod tokenizer;
 
