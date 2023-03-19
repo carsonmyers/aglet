@@ -1,12 +1,11 @@
 use std::convert::TryFrom;
-use std::iter::Peekable;
 
-use aglet_text::{Position, Span};
+use aglet_text::Span;
 
 use crate::parse::ast::*;
 use crate::parse::error::*;
 use crate::parse::input::{expect_tok, match_one, match_tok, matches_one, matches_tok, Input};
-use crate::tokenize::{self, Token, TokenKind, Tokenizer};
+use crate::tokenize::{self, Token, TokenKind};
 
 pub struct Parser<'a> {
     input: Input<'a>,
@@ -65,21 +64,6 @@ pub struct Parser<'a> {
 /// specified_class ->
 ///     | NEGATED class_spec
 ///     | class_spec
-///
-/// spec_item ->
-///     | spec_term
-///     | spec_item '&&' spec_term
-/// spec_term ->
-///     | LITERAL
-///
-/// spec_item ->
-///     | spec_term spec_item'
-/// spec_item' ->
-///     | '&&' spec_term spec_item'
-///     | \e
-/// spec_term ->
-///     | LITERAL
-///
 /// class_spec ->
 ///     | spec_item class_spec
 ///     | spec_item
@@ -485,6 +469,7 @@ use parse_alts;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tokenize::Tokenizer;
 
     fn get_class(r: Result<Option<Expr>>) -> Class {
         let Ok(Some(expr)) = r else {
