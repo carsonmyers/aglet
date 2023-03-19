@@ -111,9 +111,8 @@ pub struct Class {
 }
 
 pub enum ClassKind {
-    Posix(PosixClass),
     Unicode(UnicodeClass),
-    Specified(ClassSpec),
+    Specified(Vec<ClassSpec>),
 }
 
 pub struct PosixClass {
@@ -122,19 +121,20 @@ pub struct PosixClass {
 }
 
 pub enum PosixKind {
-    Upper,
-    Lower,
-    Alpha,
-    Digit,
-    XDigit,
     AlNum,
-    Punct,
+    Alpha,
+    Ascii,
     Blank,
-    Space,
     Cntrl,
+    Digit,
     Graph,
+    Lower,
     Print,
+    Punct,
+    Space,
+    Upper,
     Word,
+    XDigit,
 }
 
 impl TryFrom<&str> for PosixKind {
@@ -142,19 +142,20 @@ impl TryFrom<&str> for PosixKind {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "upper" => Ok(Self::Upper),
-            "lower" => Ok(Self::Lower),
-            "alpha" => Ok(Self::Alpha),
-            "digit" => Ok(Self::Digit),
-            "xdigit" => Ok(Self::XDigit),
             "alnum" => Ok(Self::AlNum),
-            "punct" => Ok(Self::Punct),
+            "alpha" => Ok(Self::Alpha),
+            "ascii" => Ok(Self::Ascii),
             "blank" => Ok(Self::Blank),
-            "space" => Ok(Self::Space),
             "cntrl" => Ok(Self::Cntrl),
+            "digit" => Ok(Self::Digit),
             "graph" => Ok(Self::Graph),
+            "lower" => Ok(Self::Lower),
             "print" => Ok(Self::Print),
+            "punct" => Ok(Self::Punct),
+            "space" => Ok(Self::Space),
+            "upper" => Ok(Self::Upper),
             "word" => Ok(Self::Word),
+            "xdigit" => Ok(Self::XDigit),
             _ => Err(TokenConvertError::InvalidPosixClass(value.to_string())),
         }
     }
@@ -167,18 +168,36 @@ pub struct UnicodeClass {
 }
 
 pub struct ClassSpec {
-    pub span:  Span,
-    pub items: Vec<ClassSpecKind>,
+    pub span: Span,
+    pub kind: ClassSpecKind,
 }
 
 pub enum ClassSpecKind {
-    Intersection(ClassSpec, ClassSpec),
-    Difference(ClassSpec, ClassSpec),
-    Symmetric(ClassSpec, ClassSpec),
+    Intersection(Intersection),
+    Difference(Difference),
+    Symmetrical(Symmetrical),
     Literal(char),
     Range(char, char),
-    Class(ClassKind),
-    Union(ClassSpec),
+    Posix(PosixClass),
+    Class(Class),
+}
+
+pub struct Intersection {
+    pub span:  Span,
+    pub left:  Box<ClassSpec>,
+    pub right: Box<ClassSpec>,
+}
+
+pub struct Difference {
+    pub span:  Span,
+    pub left:  Box<ClassSpec>,
+    pub right: Box<ClassSpec>,
+}
+
+pub struct Symmetrical {
+    pub span:  Span,
+    pub left:  Box<ClassSpec>,
+    pub right: Box<ClassSpec>,
 }
 
 pub struct StringSpan {

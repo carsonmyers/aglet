@@ -22,11 +22,14 @@ pub enum ErrorKind {
     #[error("internal state error: {0}")]
     InternalStateError(StateError),
 
-    #[error("unexpected end of input: {0}")]
+    #[error("unexpected end of input: expected {0}")]
     UnexpectedEOF(String),
 
-    #[error("unexpected token: {0:?}")]
+    #[error("unexpected token {0:?}: expected {1}")]
     UnexpectedToken(tokenize::TokenKind, String),
+
+    #[error("empty character class")]
+    EmptyClass,
 
     #[error("unexpected token: {0}")]
     TokenConvertError(TokenConvertError),

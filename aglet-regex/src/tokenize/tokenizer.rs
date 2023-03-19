@@ -274,7 +274,7 @@ impl<'a> Tokenizer<'a> {
             // `--` is the difference token
             Some('-') if matches!(self.input.peek(), Some('-')) => {
                 self.input.next();
-                Ok(self.input.token(TokenKind::RangeDifference))
+                Ok(self.input.token(TokenKind::Difference))
             },
             // `-` following a literal is a range token (e.g. `a-`)
             Some('-') if matches!(self.last_token_kind, Some(TokenKind::Literal(_))) => {
@@ -306,12 +306,12 @@ impl<'a> Tokenizer<'a> {
             // `&&` is an intersection token
             Some('&') if matches!(self.input.peek(), Some('&')) => {
                 self.input.next();
-                Ok(self.input.token(TokenKind::RangeIntersection))
+                Ok(self.input.token(TokenKind::Intersection))
             },
             // `~~` is a symmetrical difference token
             Some('~') if matches!(self.input.peek(), Some('~')) => {
                 self.input.next();
-                Ok(self.input.token(TokenKind::RangeSymmetrical))
+                Ok(self.input.token(TokenKind::Symmetrical))
             },
             // Special characters can be escaped in classes
             Some('\\') => self.parse_escape_sequence_class(),
@@ -877,6 +877,9 @@ impl<'a> Tokenizer<'a> {
             Some('D') => Ok(self.input.token(TokenKind::Digit(true))),
             Some('w') => Ok(self.input.token(TokenKind::WordChar(false))),
             Some('W') => Ok(self.input.token(TokenKind::WordChar(true))),
+            // Parse a hex escape, which is a numerical representation of a
+            // single literal character (e.g. \x7F)
+            Some(c) if Tokenizer::is_hex_escape(&c) => self.parse_hex(c),
             Some(c) if Tokenizer::escapes_to_literal_class(&c) => {
                 Ok(self.input.token(TokenKind::Literal(c)))
             },
@@ -1337,7 +1340,7 @@ mod tests {
     #[test]
     fn class_names_and_differences() {
         // Test named classes and some difference operators
-        let tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:]]]");
+        let tr = Tokenizer::new(r"[x[aA0~~[:^lower:]--[:alnum:]]&&a-z]");
         let expected = vec![
             TokenKind::OpenBracket,
             TokenKind::Literal('x'),
@@ -1345,11 +1348,11 @@ mod tests {
             TokenKind::Literal('a'),
             TokenKind::Literal('A'),
             TokenKind::Literal('0'),
-            TokenKind::RangeSymmetrical,
+            TokenKind::Symmetrical,
             TokenKind::OpenBracket,
             TokenKind::ClassName(String::from("lower"), true),
             TokenKind::CloseBracket,
-            TokenKind::RangeDifference,
+            TokenKind::Difference,
             TokenKind::OpenBracket,
             TokenKind::ClassName(String::from("alnum"), false),
             TokenKind::CloseBracket,

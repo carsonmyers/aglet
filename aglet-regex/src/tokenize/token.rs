@@ -44,9 +44,9 @@ pub enum TokenKind {
     CloseBracket,
     Negated,
     Range,
-    RangeSymmetrical,
-    RangeDifference,
-    RangeIntersection,
+    Symmetrical,
+    Difference,
+    Intersection,
     UnicodeShort(char, bool),
     UnicodeLongStart(bool),
     UnicodeLongEnd,
@@ -97,16 +97,16 @@ impl TokenKind {
         matches!(self, TokenKind::Range)
     }
 
-    pub fn is_range_symmetrical(&self) -> bool {
-        matches!(self, TokenKind::RangeSymmetrical)
+    pub fn is_symmetrical(&self) -> bool {
+        matches!(self, TokenKind::Symmetrical)
     }
 
-    pub fn is_range_difference(&self) -> bool {
-        matches!(self, TokenKind::RangeDifference)
+    pub fn is_difference(&self) -> bool {
+        matches!(self, TokenKind::Difference)
     }
 
-    pub fn is_range_intersection(&self) -> bool {
-        matches!(self, TokenKind::RangeIntersection)
+    pub fn is_intersection(&self) -> bool {
+        matches!(self, TokenKind::Intersection)
     }
 
     pub fn is_class_name(&self) -> bool {
