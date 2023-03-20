@@ -19,9 +19,6 @@ pub enum ErrorKind {
     #[error("tokenizer error: {0}")]
     TokenizeError(tokenize::ErrorKind),
 
-    #[error("internal state error: {0}")]
-    InternalStateError(StateError),
-
     #[error("unexpected end of input: expected {0}")]
     UnexpectedEOF(String),
 
@@ -45,15 +42,6 @@ impl From<tokenize::Error> for Error {
             kind: ErrorKind::TokenizeError(value.kind),
         }
     }
-}
-
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
-pub enum StateError {
-    #[error("no state on tokenizer stack")]
-    NoStateOnStack,
-
-    #[error("cannot pop final state from tokenizer stack")]
-    PoppedFinalState,
 }
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
