@@ -12,7 +12,7 @@ use crate::tokenize::{self, Token, TokenKind};
 /// Uses a recursive-descent approach to parse a regular expression, with a grammar free
 /// of left-recursion.
 ///
-/// Approximate grammar:
+/// # Grammar:
 ///
 /// ```grammar
 /// expr ->
@@ -102,7 +102,7 @@ impl<'a> Parser<'a> {
     /// An alternation is a list of expressions separated by `|` symbols, where the
     /// regular expression must match one of the alternatives.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// expr ->
@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
     /// A concatenation is a series of sub-expressions directly next to each other with
     /// no conjoining symbol, where the regular expression will match them one after the other.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// concatenation ->
@@ -204,7 +204,7 @@ impl<'a> Parser<'a> {
     /// * up to `n` times,
     /// * between `n` and `m` times
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// repetition ->
@@ -252,7 +252,7 @@ impl<'a> Parser<'a> {
     /// The specifier is the optional part of a repetition expression, so the parser generates
     /// a [`RepetitionKind`] rather than an [`Expr`].
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// repetition_spec ->
@@ -313,7 +313,7 @@ impl<'a> Parser<'a> {
     /// * zero or more: `{0,}`
     /// * one or more: `{1,}`
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// repetition_range ->
@@ -360,7 +360,7 @@ impl<'a> Parser<'a> {
     /// A `group` item is a sub-expression that may match anything. It is matched at this
     /// level because it can be a component of an alternation, concatenation, or repetition.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// item ->
@@ -437,7 +437,7 @@ impl<'a> Parser<'a> {
     /// The ignore-whitespace ('x') flag was already processed by the tokenizer and has no
     /// effect from this stage.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// group ->
@@ -466,14 +466,14 @@ impl<'a> Parser<'a> {
 
     /// Parse the type and contents of a group
     ///
-    /// Because the [`parse_group`] parser is responsible for the open and close braces
+    /// Because the [`parse_group`][1] parser is responsible for the open and close braces
     /// surrounding the group and therefore its span, this parser returns only the group
     /// kind (which contains the subexpression, if applicable).
     ///
     /// This parser cannot return `None`, as an empty group that expects an expression
     /// will be populated with an [`ExprKind::Empty`]
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// group_contents ->
@@ -483,6 +483,8 @@ impl<'a> Parser<'a> {
     ///     | FLAGS
     ///     | expr
     /// ```
+    ///
+    /// [1]: crate::parse::Parser::parse_group
     pub fn parse_group_contents(&mut self) -> Result<GroupKind> {
         let res = parse_alts![
             { self.parse_non_capturing_group() }
@@ -658,7 +660,7 @@ impl<'a> Parser<'a> {
     /// some other property) or as a specified class, where they can be matched with ranges and
     /// sets of characters, or by POSIX class.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// class ->
@@ -712,7 +714,7 @@ impl<'a> Parser<'a> {
     /// using `\p{Script_Extension!=Greek}`. Double negations are treated as positive, i.e.
     /// `\P{sc!=Greek}` is equivalent to `\p{sc=Greek}`.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// unicode_class ->
@@ -734,7 +736,7 @@ impl<'a> Parser<'a> {
     ///
     /// Unicode classes of the form `\pL` are condensed into a single token by the tokenizer.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// unicode_class ->
@@ -769,7 +771,7 @@ impl<'a> Parser<'a> {
     /// Unicode classes of the form `\p{Property=Value}` are broken into start and end
     /// tokens, name, value, and equality tokens, with name and equality tokens being optional.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// unicode_class ->
@@ -858,7 +860,7 @@ impl<'a> Parser<'a> {
     ///
     /// POSIX classes are unaware of unicode properties, and so only apply to ASCII characters.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// specified_class ->
@@ -904,11 +906,11 @@ impl<'a> Parser<'a> {
     /// Parse a specified class item
     ///
     /// Class items consist of literals, ranges, POSIX classes, subclasses, and set
-    /// operations. See [`parse_specified_class`] for more details. To eliminate
+    /// operations. See [`parse_specified_class`][1] for more details. To eliminate
     /// left-recursion from the grammar, subclasses and terminal productions are matched
     /// first before matching set operations.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// spec_item ->
@@ -922,6 +924,8 @@ impl<'a> Parser<'a> {
     ///     | '--' spec_item spec_set?
     ///     | '&&' spec_item spec_set?
     /// ```
+    ///
+    /// [1]: crate::parse::Parser::parse_specified_class
     pub fn parse_specified_class_item(&mut self) -> Result<Option<ClassSpec>> {
         let Some(term) = self.parse_specified_class_term()? else {
             return Ok(None)
@@ -937,9 +941,9 @@ impl<'a> Parser<'a> {
     /// parsed here, to ensure that the grammar is not left-recursive. Set operations
     /// can match further items to build a left-associated tree of set operations.
     ///
-    /// See [parse_specified_class] for details on class items
+    /// See [parse_specified_class][1] for details on class items
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// spec_term ->
@@ -951,6 +955,8 @@ impl<'a> Parser<'a> {
     ///     | '--' spec_item spec_set?
     ///     | '&&' spec_item spec_set?
     /// ```
+    ///
+    /// [1]: crate::parse::Parser::parse_specified_class
     pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
         let res = parse_alts![
             { self.parse_class_term_literal() }
@@ -964,7 +970,7 @@ impl<'a> Parser<'a> {
     ///
     /// Either a literal or a literal range can be parsed here
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// spec_term ->
@@ -1004,23 +1010,25 @@ impl<'a> Parser<'a> {
 
     /// Parse a specified class item that begins with an opening bracket
     ///
-    /// This includes parsing a nested class. [`parse_specified_class`] can't really be reused
+    /// This includes parsing a nested class. [`parse_specified_class`][1] can't really be reused
     /// here because it needs to consume the first bracket - here the bracket is consumed so that
     /// the beginning of POSIX_NAME can be peeked to disambiguate the two productions; once the
-    /// branch has been determined, control can't be passed to [`parse_specified_class`] because
+    /// branch has been determined, control can't be passed to [`parse_specified_class`][1] because
     /// the bracket was already consumed.
     ///
-    /// Inverting this dependency and making [`parse_specified_class`] assume the bracket was
+    /// Inverting this dependency and making [`parse_specified_class`][1] assume the bracket was
     /// already consumed doesn't work that well because that token is needed to compute the
     /// ast node's span.
     ///
-    /// From grammar:
+    /// # Grammar
     ///
     /// ```grammar
     /// spec_term ->
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
     /// ```
+    ///
+    /// [1]: crate::parse::Parser::parse_specified_class
     pub fn parse_class_term_bracket(&mut self) -> Result<Option<ClassSpec>> {
         match_tok!(self.input; span_start, TokenKind::OpenBracket);
 
@@ -1082,18 +1090,20 @@ impl<'a> Parser<'a> {
     /// * symmetric difference `A~~B`: members that are not in both A and B
     /// * intersection: `A&&B`: members that are in both set A and set B
     ///
-    /// This parser accepts a [`ClassSpec`] as the left hand side of the operation,
-    /// and matches the right hand side itself. [`parse_spec_item`] parses the left-
-    /// hand-side before optionally parsing a `spec_set` in order to eliminate
+    /// This parser accepts a [`ClassSpec`][1] as the left hand side of the operation,
+    /// and matches the right hand side itself. [`parse_specified_class_item`][2] parses
+    /// the left-hand-side before optionally parsing a `spec_set` in order to eliminate
     /// left-recursion and create a left-associative structure.
     ///
     /// Multiple subsequent set operations can be matched, e.g.
     /// `[[:ascii:]--[:upper:]--[:lower:]]`
     ///
-    /// This parser takes ownership of the left-hand-side, but returns it again if no
-    /// set operation is constructed (due to an operator not being matched).
+    /// # Arguments
     ///
-    /// From grammar:
+    /// * `start` - the left-hand-side of the operation. The parser takes ownership of it,
+    ///     but if no operator is matched, it will be returned again.
+    ///
+    /// # Grammar
     ///
     /// ```grammar
     /// spec_set ->
@@ -1101,6 +1111,9 @@ impl<'a> Parser<'a> {
     ///     | '--' spec_term spec_set?
     ///     | '&&' spec_term spec_set?
     /// ```
+    ///
+    /// [1]: crate::parse::ast::ClassSpec
+    /// [2]: crate::parse::Parser::parse_specified_class_item
     pub fn parse_class_item_set(&mut self, start: ClassSpec) -> Result<ClassSpec> {
         // match a set operator to begin parsing the class spec
         let mut set_kind: Option<TokenKind> = None;
@@ -1175,6 +1188,7 @@ use parse_alts;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse::token_iter;
     use crate::tokenize::Tokenizer;
 
     fn get_class(r: Result<Option<Expr>>) -> Class {
@@ -1427,8 +1441,17 @@ mod tests {
 
     #[test]
     fn class_term_bracket() {
-        let tr = Tokenizer::new(r"[[:xdigit:][abc]a]");
-        let mut p = Parser::new(tr.skip(1));
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenBracket,
+            TokenKind::ClassName("xdigit".to_string(), false),
+            TokenKind::CloseBracket,
+            TokenKind::OpenBracket,
+            TokenKind::Literal('a'),
+            TokenKind::Literal('b'),
+            TokenKind::Literal('c'),
+            TokenKind::CloseBracket,
+            TokenKind::Literal('a'),
+        ]));
 
         let spec = get_class_spec(p.parse_class_term_bracket());
         assert!(matches!(
@@ -1455,12 +1478,18 @@ mod tests {
     #[test]
     fn class_item_set() {
         let lhs = ClassSpec {
-            span: Span::new(),
+            span: Span::from_offsets(2, 3),
             kind: ClassSpecKind::Literal('c'),
         };
 
-        let tr = Tokenizer::new(r"[a~~a-z--z]");
-        let mut p = Parser::new(tr.skip(2));
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::Symmetrical,
+            TokenKind::Literal('a'),
+            TokenKind::Range,
+            TokenKind::Literal('z'),
+            TokenKind::Difference,
+            TokenKind::Literal('z'),
+        ]));
 
         let Ok(spec) = p.parse_class_item_set(lhs) else {
             panic!("parse failed");
