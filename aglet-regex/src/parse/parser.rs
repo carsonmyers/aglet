@@ -7,28 +7,23 @@ use crate::parse::error::*;
 use crate::parse::input::{expect_tok, match_one, match_tok, matches_one, matches_tok, Input};
 use crate::tokenize::{self, Token, TokenKind};
 
-pub struct Parser<'a> {
-    input:       Input<'a>,
-    group_index: usize,
-}
-
-/// Parse a regular expression from a token stream
+/// Parse regular expressions from a [token stream](tokenize::Tokenizer)
 ///
-/// Grammar:
+/// Uses a recursive-descent approach to parse a regular expression, with a grammar free
+/// of left-recursion.
+///
+/// Approximate grammar:
 ///
 /// ```grammar
 /// expr ->
 ///     | alternation
 ///     | \e
 /// alternation ->
-///     | concatenation '|' alternation
-///     | concatenation
+///     | concatenation ('|' alternation)?
 /// concatenation ->
-///     | repetition concatination
-///     | repetition
+///     | repetition concatenation?
 /// repetition ->
-///     | item repetition-spec
-///     | item
+///     | item repetition-spec?
 /// repetition_spec ->
 ///     | repetition_range
 ///     | QUESTION
@@ -37,9 +32,7 @@ pub struct Parser<'a> {
 /// repetition_range ->
 ///     | '{' repetition_range_contents '}'
 /// repetition_range_contents ->
-///     | NUMBER ',' NUMBER
-///     | NUMBER ','
-///     | ',' NUMBER
+///     | NUMBER? (',' NUMBER?)?
 /// item ->
 ///     | DOT
 ///     | LITERAL
@@ -53,35 +46,40 @@ pub struct Parser<'a> {
 ///     | NON_CAPTURING_FLAGS expr
 ///     | GROUP_NAME expr
 ///     | FLAGS
-///     | \e
 /// class ->
 ///     | unicode_class
 ///     | '[' specified_class ']'
 /// unicode_class ->
-///     | UNICODE_SHORT
-///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
-///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
+///     | unicode_escape CHAR
+///     | unicode_escape '{' UNICODE_PROP_VALUE '}'
+///     | unicode_escape '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
+///     | unicode_escape '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+/// unicode_escape ->
+///     | '\p'
+///     | '\P'
 /// specified_class ->
-///     | NEGATED class_spec
-///     | class_spec
-/// class_spec ->
-///     | spec_item class_spec
-///     | spec_item
+///     | NEGATED? spec_item+
 /// spec_item ->
-///     | spec_term spec_set
+///     | spec_term spec_set?
 /// spec_term ->
-///     | LITERAL
-///     | LITERAL '-' LITERAL
+///     | LITERAL ('-' LITERAL)?
 ///     | '[' POSIX_NAME ']'
 ///     | '[' specified_class ']'
 /// spec_set ->
-///     | '~~' spec_term spec_set
-///     | '--' spec_item spec_set
-///     | '&&' spec_item spec_set
-///     | \e
+///     | '~~' spec_term spec_set?
+///     | '--' spec_item spec_set?
+///     | '&&' spec_item spec_set?
 /// ```
+pub struct Parser<'a> {
+    input:       Input<'a>,
+    group_index: usize,
+}
+
 impl<'a> Parser<'a> {
+    /// Create a new parser from a token iterator
+    ///
+    /// Since [`Tokenizer`](tokenize::Tokenizer) implementes Iterator, a parser can be built
+    /// from it directly
     pub fn new<T>(input: T) -> Self
     where
         T: Iterator<Item = tokenize::Result<Token>> + 'a,
@@ -92,50 +90,51 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn next_group_index(&mut self) -> usize {
-        let index = self.group_index;
-        self.group_index += 1;
-        index
-    }
-
+    /// Parse the regular expression into a [syntax tree](Ast)
     pub fn parse(mut self) -> Result<Ast> {
         Ok(Ast {
             head: self.parse_expr()?,
         })
     }
 
+    /// Parse an expression, starting with alternations as the weakest binding operation
+    ///
+    /// An alternation is a list of expressions separated by `|` symbols, where the
+    /// regular expression must match one of the alternatives.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// expr ->
     ///     | alternation
     ///     | \e
-    fn parse_expr(&mut self) -> Result<Expr> {
-        if let Some(expr) = self.parse_alternation()? {
-            Ok(expr)
-        } else {
-            let span = Span::from(self.input.position(), self.input.position());
-            return Ok(Expr {
-                span,
-                kind: ExprKind::Empty,
-            });
-        }
-    }
-
     /// alternation ->
-    ///     | concatenation '|' alternation
-    ///     | concatenation
-    fn parse_alternation(&mut self) -> Result<Option<Expr>> {
+    ///     | concatenation ('|' alternation)?
+    /// ```
+    pub fn parse_expr(&mut self) -> Result<Expr> {
         let mut items = Vec::new();
 
+        // don't recursively match concatenation and then alternation as in the grammar,
+        // rather just use a loop to match a series of concatenations
         loop {
+            // parse an alternate
             let item = match self.parse_concatenation()? {
                 Some(item) => item,
+
+                // If there is nothing in the alternate (e.g., `/abc|/`) then an empty
+                // expression is allowed
                 None => Expr {
                     span: Span::from(self.input.position(), self.input.position()),
                     kind: ExprKind::Empty,
                 },
             };
 
+            // there will always be at least one item, since even an empty token stream will
+            // first match an `ExprKind::Empty`
             items.push(item);
 
+            // continue matching expressions as alternates as long as there are more
+            // `|` symbols separating them
             let matched_pipe = matches_tok!(self.input; TokenKind::Alternate);
             if !matched_pipe {
                 break;
@@ -143,26 +142,42 @@ impl<'a> Parser<'a> {
         }
 
         if items.len() > 1 {
+            // The alternation expression type only makes sense if there is more than one
+            // alternate
             let span = Span::wrap(items[0].span, items[items.len() - 1].span);
-            Ok(Some(Expr {
-                span,
-                kind: ExprKind::Alternation(Alternation { span, items }),
-            }))
+            let kind = ExprKind::Alternation(Alternation { span, items });
+
+            Ok(Expr { span, kind })
         } else {
-            Ok(items.pop())
+            // If there is only one alternate, don't bother wrapping it in an `Alternation`
+            // and just use the underlying expression instead. There is always at least one
+            // item so it's safe to unwrap
+            Ok(items.pop().unwrap())
         }
     }
 
+    /// Parse a concatenation, using repetition as the next weakest binding operation
+    ///
+    /// A concatenation is a series of sub-expressions directly next to each other with
+    /// no conjoining symbol, where the regular expression will match them one after the other.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// concatenation ->
-    ///     | repetition concatination
-    ///     | repetition
-    fn parse_concatenation(&mut self) -> Result<Option<Expr>> {
+    ///     | repetition concatination?
+    /// ```
+    pub fn parse_concatenation(&mut self) -> Result<Option<Expr>> {
         let mut items = Vec::new();
 
+        // don't recursively match repetitions and concatenations, rather just use a loop
+        // to match a series of repetitions, accomplishing the same thing
         while let Some(item) = self.parse_repetition()? {
             items.push(item);
         }
 
+        // A concatenation only makes sense so long as there's more than one element
+        // to concatenate, otherwise the sub-expression type should pass through
         if items.len() > 1 {
             let span = Span::wrap(items[0].span, items[items.len() - 1].span);
             Ok(Some(Expr {
@@ -170,18 +185,49 @@ impl<'a> Parser<'a> {
                 kind: ExprKind::Concatenation(Concatenation { span, items }),
             }))
         } else {
+            // If there's less than two items, return the subexpression instead of a new
+            // concatenation (or None if no items were matched)
             Ok(items.pop())
         }
     }
 
+    /// Parse a repetition of items
+    ///
+    /// Repetition specifies the number of times an item should be matched:
+    ///
+    /// * exactly one time (default),
+    /// * zero or one times,
+    /// * zero or more times,
+    /// * one or more times,
+    /// * exactly `n` times,
+    /// * `n` or more times,
+    /// * up to `n` times,
+    /// * between `n` and `m` times
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// repetition ->
-    ///     | item repetition-spec
-    ///     | item
-    fn parse_repetition(&mut self) -> Result<Option<Expr>> {
+    ///     | item repetition-spec?
+    /// repetition_spec ->
+    ///     | repetition_range
+    ///     | QUESTION
+    ///     | STAR
+    ///     | PLUS
+    /// repetition_range ->
+    ///     | '{' repetition_range_contents '}'
+    /// repetition_range_contents ->
+    ///     | NUMBER? (',' NUMBER?)?
+    /// ```
+    pub fn parse_repetition(&mut self) -> Result<Option<Expr>> {
+        // match the item to be repeated
         let Some(item) = self.parse_item()? else {
             return Ok(None);
         };
 
+        // the default quantity (exactly once) doesn't require any text to be matched,
+        // so matching a repetition specifier is optional. When not present, the sub-item
+        // will pass through instead of a repetition expr
         if let Some(kind) = self.parse_repetition_spec()? {
             let span = Span::from(item.span.start, self.input.position());
             let repetition = Repetition {
@@ -190,27 +236,36 @@ impl<'a> Parser<'a> {
                 item: Box::new(item),
             };
 
+            // a repetition specifier is present, so encode it in a repetition expression
             Ok(Some(Expr {
                 span,
                 kind: ExprKind::Repetition(repetition),
             }))
         } else {
+            // no repetition specifier was present, so pass through the matched item
             Ok(Some(item))
         }
     }
 
+    /// Parse a repetition specifier
+    ///
+    /// The specifier is the optional part of a repetition expression, so the parser generates
+    /// a [`RepetitionKind`] rather than an [`Expr`].
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// repetition_spec ->
+    ///     | repetition_range
     ///     | QUESTION
     ///     | STAR
     ///     | PLUS
-    ///     | repetition_range
     /// repetition_range ->
     ///     | '{' repetition_range_contents '}'
     /// repetition_range_contents ->
-    ///     | NUMBER ',' NUMBER
-    ///     | NUMBER ','
-    ///     | ',' NUMBER
-    fn parse_repetition_spec(&mut self) -> Result<Option<RepetitionKind>> {
+    ///     | NUMBER? (',' NUMBER?)?
+    /// ```
+    pub fn parse_repetition_spec(&mut self) -> Result<Option<RepetitionKind>> {
         let res = parse_alts![
             { self.parse_question() }
             { self.parse_star() }
@@ -221,41 +276,72 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
-    fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
+    /// Parse the zero-or-one quantity specifier (`?`)
+    pub fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
         match_tok!(self.input; _, TokenKind::Question);
 
         Ok(Some(RepetitionKind::ZeroOrOne))
     }
 
-    fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
+    /// Parse the zero-or-more quantity specifier (`*`)
+    pub fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
         match_tok!(self.input; _, TokenKind::Star);
 
         Ok(Some(RepetitionKind::ZeroOrMore))
     }
 
-    fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
+    /// Parse the one-or-more quantity specifier (`+`)
+    pub fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
         match_tok!(self.input; _, TokenKind::Plus);
 
         Ok(Some(RepetitionKind::OneOrMore))
     }
 
-    fn parse_repetition_range(&mut self) -> Result<Option<RepetitionKind>> {
+    /// Parse a specified range for a repetition
+    ///
+    /// A repetition range specifies a custom quantity for an item not expressible by
+    /// the `?`, `*`, and `+` specifiers:
+    ///
+    /// * `n` to `m`: `{n,m}`
+    /// * up to `n`: `{,n}` or `{0,n}`
+    /// * `n` or more: `{n,}`
+    /// * exactly `n`: `{n}`
+    ///
+    /// The can also be used in place of the `?`, `*`, and `+` specifiers:
+    ///
+    /// * zero or one: `{0,1}`
+    /// * zero or more: `{0,}`
+    /// * one or more: `{1,}`
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
+    /// repetition_range ->
+    ///     | '{' repetition_range_contents '}'
+    /// repetition_range_contents ->
+    ///     | NUMBER? (',' NUMBER?)?
+    /// ```
+    pub fn parse_repetition_range(&mut self) -> Result<Option<RepetitionKind>> {
         match_tok!(self.input; span_start, TokenKind::OpenBrace);
 
+        // both numbers are optional, `{,}` is equivalent to `{0,}` and `*`
         let mut start: Option<usize> = None;
         let mut end: Option<usize> = None;
 
+        // first number
         matches_tok!(self.input; TokenKind::Number(number), |_| {
             start = Some(number);
             Ok(())
         });
 
-        expect_tok!(self.input, "comma `,`"; _, TokenKind::Comma);
-
-        matches_tok!(self.input; TokenKind::Number(number), |_| {
-            end = Some(number);
-            Ok(())
-        });
+        // the second number is only allowed if a comma is present
+        if matches_tok!(self.input; TokenKind::Comma) {
+            // second number
+            matches_tok!(self.input; TokenKind::Number(number), |_| {
+                end = Some(number);
+                Ok(())
+            });
+        }
 
         expect_tok!(self.input, "end of range `}`"; span_end, TokenKind::CloseBrace);
 
@@ -263,13 +349,28 @@ impl<'a> Parser<'a> {
         Ok(Some(RepetitionKind::Range(Range { span, start, end })))
     }
 
+    /// Parse an item to be matched by the regular expression
+    ///
+    /// Items are the basic units of the regular expression and represent actual text to
+    /// be matched. The simplest items (`DOT`, `LITERAL`) match a single character (unless
+    /// accompanied by a repetition specifier), and a `BOUNDARY` matches a zero-width location
+    /// in the input (e.g. the beginning of a word). The non-terminal `class` item also
+    /// matches a single character, but is constructed from a more complicated specification.
+    ///
+    /// A `group` item is a sub-expression that may match anything. It is matched at this
+    /// level because it can be a component of an alternation, concatenation, or repetition.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// item ->
     ///     | DOT
     ///     | LITERAL
     ///     | BOUNDARY
     ///     | group
     ///     | class
-    fn parse_item(&mut self) -> Result<Option<Expr>> {
+    /// ```
+    pub fn parse_item(&mut self) -> Result<Option<Expr>> {
         let res = parse_alts![
             { self.parse_dot() }
             { self.parse_literal() }
@@ -281,7 +382,8 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
-    fn parse_dot(&mut self) -> Result<Option<Expr>> {
+    /// Parse the "any" item (`.`)
+    pub fn parse_dot(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span, TokenKind::Dot);
 
         Ok(Some(Expr {
@@ -290,7 +392,8 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_literal(&mut self) -> Result<Option<Expr>> {
+    /// Parse a literal item (a single character)
+    pub fn parse_literal(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span, TokenKind::Literal(c));
 
         Ok(Some(Expr {
@@ -299,7 +402,11 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_boundary(&mut self) -> Result<Option<Expr>> {
+    /// Parse a boundary item
+    ///
+    /// Boundaries have already been condensed into single tokens by the tokenizer,
+    /// but may be a single character (e.g. `$` or `^`) or several (`\b`)
+    pub fn parse_boundary(&mut self) -> Result<Option<Expr>> {
         let tok = match_tok!(self.input; TokenKind::is_boundary);
 
         let span = tok.span;
@@ -314,11 +421,39 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse a group item
+    ///
+    /// A group is usually a sub-expression that contains another entire regex. It is surrounded
+    /// by parentheses and can begin with some options that change its behaviour.
+    ///
+    /// Groups can be capturing (the text matched by the sub-expression can be retrieved
+    /// on its own), named, non-capturing, and contain flags which alter the behaviour of the
+    /// engine. For example, the case-insensitive flag will make matches within the group
+    /// case-insensitive.
+    ///
+    /// The `FLAGS` group does not contain a sub-expression, but applies the effect of the
+    /// specified flags to the current expression.
+    ///
+    /// The ignore-whitespace ('x') flag was already processed by the tokenizer and has no
+    /// effect from this stage.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// group ->
     ///     | '(' group_contents ')'
-    fn parse_group(&mut self) -> Result<Option<Expr>> {
+    /// group_contents ->
+    ///     | NON_CAPTURING expr
+    ///     | NON_CAPTURING_FLAGS expr
+    ///     | GROUP_NAME expr
+    ///     | FLAGS
+    /// ```
+    pub fn parse_group(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span_start, TokenKind::OpenGroup);
+
+        // use a sub-parse to match the group's type and its contents, if applicable
         let kind = self.parse_group_contents()?;
+
         expect_tok!(self.input, "end of group `)`"; span_end, TokenKind::CloseGroup);
 
         let span = Span::wrap(span_start, span_end);
@@ -329,26 +464,43 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse the type and contents of a group
+    ///
+    /// Because the [`parse_group`] parser is responsible for the open and close braces
+    /// surrounding the group and therefore its span, this parser returns only the group
+    /// kind (which contains the subexpression, if applicable).
+    ///
+    /// This parser cannot return `None`, as an empty group that expects an expression
+    /// will be populated with an [`ExprKind::Empty`]
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// group_contents ->
     ///     | NON_CAPTURING expr
     ///     | NON_CAPTURING_FLAGS expr
     ///     | GROUP_NAME expr
     ///     | FLAGS
     ///     | expr
-    fn parse_group_contents(&mut self) -> Result<GroupKind> {
+    /// ```
+    pub fn parse_group_contents(&mut self) -> Result<GroupKind> {
         let res = parse_alts![
             { self.parse_non_capturing_group() }
             { self.parse_non_capturing_flags_group() }
             { self.parse_named_group() }
-            { self.parse_flags_group() }
+            { self.parse_flag_group() }
             { self.parse_capturing_group() }
         ]
+        // one of the group contents parsers must always produce a match
         .expect("group contents should not be None");
 
         Ok(res)
     }
 
-    fn parse_non_capturing_group(&mut self) -> Result<Option<GroupKind>> {
+    /// Parse a non-capturing group.
+    ///
+    /// A non-capturing group begins with `:?` ([`TokenKind::NonCapturing`])
+    pub fn parse_non_capturing_group(&mut self) -> Result<Option<GroupKind>> {
         match_tok!(self.input; _, TokenKind::NonCapturing);
         let expr = self.parse_expr()?;
 
@@ -358,10 +510,35 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_non_capturing_flags_group(&mut self) -> Result<Option<GroupKind>> {
+    /// Parse a non-capturing group with flags
+    ///
+    /// Non-capturing groups with flags also begin with `:?`, but the flag specification
+    /// is between the `:` and `?`.
+    ///
+    /// Available flags are:
+    ///
+    /// * `i`: case-insensitive
+    /// * `m`: multi-line
+    /// * `s`: `.` matches newlines
+    /// * `U`: swaps the meaning of `.*` and `.*?`
+    /// * `u`: enable unicode support (default)
+    /// * `x`: ignore whitespace and allow comments
+    ///
+    /// Flags are set or cleared like so:
+    ///
+    /// `ix-um`
+    ///
+    /// * Set the case-insensitive flag `i`
+    /// * Set the ignore-whitespace flag `x`
+    /// * Clear the unicode support flag `u`
+    /// * Clear the multi-line flag `m`
+    ///
+    /// Together, the `?ix-um:` is a [`TokenKind::NonCapturingFlags`]
+    pub fn parse_non_capturing_flags_group(&mut self) -> Result<Option<GroupKind>> {
         match_tok!(self.input; span, TokenKind::NonCapturingFlags(set_flags, clear_flags));
         let expr = self.parse_expr()?;
 
+        // reinterpret the flag characters to AST flags
         let set_flags = self.parse_flags(set_flags)?;
         let clear_flags = self.parse_flags(clear_flags)?;
 
@@ -375,7 +552,14 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_named_group(&mut self) -> Result<Option<GroupKind>> {
+    /// Parse a named group
+    ///
+    /// Named groups are capturing groups, but instead of being identified by a
+    /// number, are identified with a string.
+    ///
+    /// Named groups begin with `?P<name>`, where `name` is the name of the
+    /// sub-expression
+    pub fn parse_named_group(&mut self) -> Result<Option<GroupKind>> {
         match_tok!(self.input; span, TokenKind::Name(name));
         let expr = self.parse_expr()?;
 
@@ -387,9 +571,39 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_flags_group(&mut self) -> Result<Option<GroupKind>> {
+    /// Parse a flag group
+    ///
+    /// A flag group is similar to a non-capturing group with flags, however instead of
+    /// applying the effects of the flags to a sub-expression, they are applied to the
+    /// current expression. This group type does not match a sub-expression.
+    ///
+    /// Flag groups are specified the same way as non-capturing groups with flags,
+    /// but without the trailing `:` after the flags, and without the subexpression. E.g.:
+    /// `(?ix)`.
+    ///
+    /// Available flags are:
+    ///
+    /// * `i`: case-insensitive
+    /// * `m`: multi-line
+    /// * `s`: `.` matches newlines
+    /// * `U`: swaps the meaning of `.*` and `.*?`
+    /// * `u`: enable unicode support (default)
+    /// * `x`: ignore whitespace and allow comments
+    ///
+    /// Flags are set or cleared like so:
+    ///
+    /// `ix-um`
+    ///
+    /// * Set the case-insensitive flag `i`
+    /// * Set the ignore-whitespace flag `x`
+    /// * Clear the unicode support flag `u`
+    /// * Clear the multi-line flag `m`
+    ///
+    /// Together, the `?ix-um` is a [`TokenKind::Flags`]
+    pub fn parse_flag_group(&mut self) -> Result<Option<GroupKind>> {
         match_tok!(self.input; span, TokenKind::Flags(set_flags, clear_flags));
 
+        // reinterpret the flag characters as AST flags
         let set_flags = self.parse_flags(set_flags)?;
         let clear_flags = self.parse_flags(clear_flags)?;
 
@@ -402,16 +616,30 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_capturing_group(&mut self) -> Result<Option<GroupKind>> {
+    /// Parse a capturing group
+    ///
+    /// The matched contents of a capturing group can be referenced after the match. Named groups
+    /// are reference by a string name, whereas basic capturing groups are identified by a
+    /// sequenced number. The first capturing group is referenced by the number `1`. The number
+    /// `0` references the entire match.
+    ///
+    /// Capturing groups are not prefixed with any tokens
+    pub fn parse_capturing_group(&mut self) -> Result<Option<GroupKind>> {
+        // The only part of a capturing group (besides the parentheses) is the sub-expression
         let expr = self.parse_expr()?;
 
+        // assign an incrementing index to the group
+        let index = self.group_index;
+        self.group_index += 1;
+
         Ok(Some(GroupKind::Capturing(CapturingGroup {
-            index: self.next_group_index(),
-            expr:  Box::new(expr),
+            index,
+            expr: Box::new(expr),
         })))
     }
 
-    fn parse_flags(&self, input_flags: Vec<char>) -> Result<Vec<FlagKind>> {
+    /// Parse a flag set from a `Vec<char>`
+    pub fn parse_flags(&self, input_flags: Vec<char>) -> Result<Vec<FlagKind>> {
         let res = input_flags
             .into_iter()
             .map(FlagKind::try_from)
@@ -423,10 +651,43 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a character class
+    ///
+    /// Character classes match a single character from the input. The can be specified either
+    /// as a unicode class (any character belonging to a certain unicode category, or having
+    /// some other property) or as a specified class, where they can be matched with ranges and
+    /// sets of characters, or by POSIX class.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// class ->
     ///     | unicode_class
     ///     | '[' specified_class ']'
-    fn parse_class(&mut self) -> Result<Option<Expr>> {
+    /// unicode_class ->
+    ///     | unicode_escape CHAR
+    ///     | unicode_escape '{' UNICODE_PROP_VALUE '}'
+    ///     | unicode_escape '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
+    ///     | unicode_escape '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+    /// unicode_escape ->
+    ///     | '\p'
+    ///     | '\P'
+    /// specified_class ->
+    ///     | NEGATED? spec_item+
+    /// spec_item ->
+    ///     | spec_term spec_set
+    /// spec_term ->
+    ///     | LITERAL
+    ///     | LITERAL '-' LITERAL
+    ///     | '[' POSIX_NAME ']'
+    ///     | '[' specified_class ']'
+    /// spec_set ->
+    ///     | '~~' spec_term spec_set
+    ///     | '--' spec_item spec_set
+    ///     | '&&' spec_item spec_set
+    ///     | \e
+    /// ```
+    pub fn parse_class(&mut self) -> Result<Option<Expr>> {
         let res = parse_alts![
             { self.parse_specified_class() }
             { self.parse_unicode_class() }
@@ -435,12 +696,32 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
+    /// Parse a unicode character class
+    ///
+    /// Unicode classes match a character with a specified property value, such as the general
+    /// category, script, script extension, block, etc.
+    ///
+    /// The short unicode class `\pL` uses the single-character variant of the general category,
+    /// e.g. `L` for `Letter`. The longer version, `\p{Ll}` can use a longer specification,
+    /// e.g. `Ll` for lowercase letters, `Letter` for letters, etc.
+    ///
+    /// Matching for a property other than general category uses the syntax `\p{scx=Greek}`,
+    /// which matches a character in the greek script extension.
+    ///
+    /// The match can be negated using `\P` instead of `\p`, or in the property name syntax,
+    /// using `\p{Script_Extension!=Greek}`. Double negations are treated as positive, i.e.
+    /// `\P{sc!=Greek}` is equivalent to `\p{sc=Greek}`.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// unicode_class ->
     ///     | UNICODE_SHORT
     ///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
     ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!' '=' UNICODE_PROP_VALUE '}'
-    fn parse_unicode_class(&mut self) -> Result<Option<Expr>> {
+    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+    /// ```
+    pub fn parse_unicode_class(&mut self) -> Result<Option<Expr>> {
         let res = parse_alts![
             { self.parse_unicode_short_class() }
             { self.parse_unicode_long_class() }
@@ -449,9 +730,20 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
-    fn parse_unicode_short_class(&mut self) -> Result<Option<Expr>> {
+    /// Parse a short-form unicode character class
+    ///
+    /// Unicode classes of the form `\pL` are condensed into a single token by the tokenizer.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
+    /// unicode_class ->
+    ///     | UNICODE_SHORT
+    /// ```
+    pub fn parse_unicode_short_class(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span, TokenKind::UnicodeShort(category, negated));
 
+        // create a unicode class for the general category specified by the token
         let unicode_class = UnicodeClass {
             span,
             name: None,
@@ -461,6 +753,7 @@ impl<'a> Parser<'a> {
             },
         };
 
+        // construct the class expression with the negation value from the token
         Ok(Some(Expr {
             span,
             kind: ExprKind::Class(Class {
@@ -471,7 +764,20 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_unicode_long_class(&mut self) -> Result<Option<Expr>> {
+    /// Parse a long-form unicode character class
+    ///
+    /// Unicode classes of the form `\p{Property=Value}` are broken into start and end
+    /// tokens, name, value, and equality tokens, with name and equality tokens being optional.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
+    /// unicode_class ->
+    ///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+    /// ```
+    pub fn parse_unicode_long_class(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span_begin, TokenKind::UnicodeLongStart(negated));
 
         let mut negated = negated;
@@ -479,11 +785,15 @@ impl<'a> Parser<'a> {
         let mut value: Option<StringSpan> = None;
 
         match_one!(self.input; [
+
+            // for the form `\p{Value}`
             (TokenKind::UnicodePropValue(v), |span| {
                 value = Some(StringSpan { span, value: v });
 
                 Ok(())
             }),
+
+            // for the form `\p{Name=Value}`
             (TokenKind::UnicodePropName(n), |span| {
                 name = Some(StringSpan { span, value: n });
 
@@ -506,6 +816,8 @@ impl<'a> Parser<'a> {
 
         match_tok!(self.input; span_end, TokenKind::UnicodeLongEnd);
 
+        // construct the unicode class with the name and value collected from
+        // UnicodePropValue and (optionally) UnicodePropName tokens
         let span = Span::wrap(span_begin, span_end);
         let unicode_class = UnicodeClass {
             span,
@@ -513,6 +825,8 @@ impl<'a> Parser<'a> {
             value: value.expect("property value"),
         };
 
+        // construct a class expression with the negation value from the UnicodeLongStart
+        // and (optionally) UnicodeEqual tokens
         Ok(Some(Expr {
             span,
             kind: ExprKind::Class(Class {
@@ -523,18 +837,50 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// class ->
-    ///     | '[' specified_class ']'
+    /// Parse a specified class
+    ///
+    /// A specified class represents a set of characters which can be matched from the input.
+    /// They are specified using a combination of literals, ranges, set operations, sub-classes
+    /// and POSIX classes:
+    ///
+    /// * literals: `[abc]` matches any character `a`, `b`, or `c`
+    /// * ranges: `[a-c]` matches any character `a`, `b`, or `c`
+    /// * set difference: `[[abcdef]--[def]]` matches any character `a`, `b`, or `c`
+    /// * set intersection: `[[abcdef]&&[cdxyz]]` matches any character `c` or `d`
+    /// * symmetrical set difference: `[[abc]~~[bcd]]` matches any character `a` or `d`
+    /// * posix classes: `[[:alnum:]]` matches any alphanumeric character
+    ///
+    /// Classes can be negated using a `^` token at the beginning. POSIX classes can themselves
+    /// be negated using the same token at the beginning of the name:
+    ///
+    /// * `[^abc]` matches any character except `a`, `b`, and `c`
+    /// * `[[:^lower:]]` matches any character except lowercase letters
+    ///
+    /// POSIX classes are unaware of unicode properties, and so only apply to ASCII characters.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// specified_class ->
-    ///     | NEGATED class_spec
-    ///     | class_spec
-    /// class_spec ->
-    ///     | spec_item class_spec
-    ///     | spec_item
-    fn parse_specified_class(&mut self) -> Result<Option<Expr>> {
+    ///     | NEGATED? spec_item+
+    /// spec_item ->
+    ///     | spec_term spec_set?
+    /// spec_term ->
+    ///     | LITERAL ('-' LITERAL)?
+    ///     | '[' POSIX_NAME ']'
+    ///     | '[' specified_class ']'
+    /// spec_set ->
+    ///     | '~~' spec_term spec_set?
+    ///     | '--' spec_item spec_set?
+    ///     | '&&' spec_item spec_set?
+    /// ```
+    pub fn parse_specified_class(&mut self) -> Result<Option<Expr>> {
         match_tok!(self.input; span_start, TokenKind::OpenBracket);
 
+        // optionally match a negation token for the class
         let negated = matches_tok!(self.input; TokenKind::Negated);
+
+        // match all specification items
         let mut items = Vec::new();
         while let Some(item) = self.parse_specified_class_item()? {
             items.push(item);
@@ -555,9 +901,28 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse a specified class item
+    ///
+    /// Class items consist of literals, ranges, POSIX classes, subclasses, and set
+    /// operations. See [`parse_specified_class`] for more details. To eliminate
+    /// left-recursion from the grammar, subclasses and terminal productions are matched
+    /// first before matching set operations.
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// spec_item ->
-    ///     | spec_term spec_set
-    fn parse_specified_class_item(&mut self) -> Result<Option<ClassSpec>> {
+    ///     | spec_term spec_set?
+    /// spec_term ->
+    ///     | LITERAL ('-' LITERAL)?
+    ///     | '[' POSIX_NAME ']'
+    ///     | '[' specified_class ']'
+    /// spec_set ->
+    ///     | '~~' spec_term spec_set?
+    ///     | '--' spec_item spec_set?
+    ///     | '&&' spec_item spec_set?
+    /// ```
+    pub fn parse_specified_class_item(&mut self) -> Result<Option<ClassSpec>> {
         let Some(term) = self.parse_specified_class_term()? else {
             return Ok(None)
         };
@@ -566,13 +931,27 @@ impl<'a> Parser<'a> {
         Ok(Some(with_set))
     }
 
+    /// Parse a specified class item, excluding set operations
+    ///
+    /// Any specification item that can be positively identified by a terminal can be
+    /// parsed here, to ensure that the grammar is not left-recursive. Set operations
+    /// can match further items to build a left-associated tree of set operations.
+    ///
+    /// See [parse_specified_class] for details on class items
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// spec_term ->
-    ///     | LITERAL
-    ///     | LITERAL '-' LITERAL
+    ///     | LITERAL ('-' LITERAL)?
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
-    ///     | unicode_class
-    fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
+    /// spec_set ->
+    ///     | '~~' spec_term spec_set?
+    ///     | '--' spec_item spec_set?
+    ///     | '&&' spec_item spec_set?
+    /// ```
+    pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
         let res = parse_alts![
             { self.parse_class_term_literal() }
             { self.parse_class_term_bracket() }
@@ -581,16 +960,27 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
+    /// Parse a character class item beginning with a literal
+    ///
+    /// Either a literal or a literal range can be parsed here
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// spec_term ->
-    ///     | LITERAL '-' LITERAL
-    ///     | LITERAL
-    fn parse_class_term_literal(&mut self) -> Result<Option<ClassSpec>> {
+    ///     | LITERAL ('-' LITERAL)?
+    /// ```
+    pub fn parse_class_term_literal(&mut self) -> Result<Option<ClassSpec>> {
+        // match a literal, which will either be on its own or at the start
+        // of a literal range
         match_tok!(self.input; span_start, TokenKind::Literal(c_start));
 
+        // optionally match the second half of a range
         let mut spec: Option<ClassSpec> = None;
         let matched_range = matches_tok!(self.input; TokenKind::Range, |span_end| {
             expect_tok!(self.input, "end of range"; span_end, TokenKind::Literal(c_end));
 
+            // if a range is matched, a range class specifier will be returned
             let span = Span::wrap(span_start, span_end);
             let kind = ClassSpecKind::Range(c_start, c_end);
             spec = Some(ClassSpec {
@@ -601,6 +991,8 @@ impl<'a> Parser<'a> {
             Ok(())
         });
 
+        // if a range wasn't matched, then the literal class specifier will be
+        // returned on its own
         if !matched_range {
             let span = span_start;
             let kind = ClassSpecKind::Literal(c_start);
@@ -622,22 +1014,30 @@ impl<'a> Parser<'a> {
     /// already consumed doesn't work that well because that token is needed to compute the
     /// ast node's span.
     ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// spec_term ->
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
-    fn parse_class_term_bracket(&mut self) -> Result<Option<ClassSpec>> {
+    /// ```
+    pub fn parse_class_term_bracket(&mut self) -> Result<Option<ClassSpec>> {
         match_tok!(self.input; span_start, TokenKind::OpenBracket);
 
         let mut kind: Option<ClassSpecKind> = None;
         let mut span: Option<Span> = None;
+
+        // attempt to match a POSIX class name
         let matched = matches_tok!(self.input; TokenKind::ClassName(name, negated), |_| {
             expect_tok!(self.input, "end of posix class `]`"; span_end, TokenKind::CloseBracket);
 
+            // convert the matched name into a POSIX class item
             let posix_kind = match PosixKind::try_from(name.as_ref()) {
                 Ok(kind) => Ok(kind),
                 Err(err) => Err(self.input.error(ErrorKind::TokenConvertError(err))),
             }?;
 
+            // create the class specifier for a posix class
             let kind_span = Span::wrap(span_start, span_end);
             span = Some(kind_span);
             kind = Some(ClassSpecKind::Posix(PosixClass { span: kind_span, kind: posix_kind }));
@@ -645,8 +1045,11 @@ impl<'a> Parser<'a> {
             Ok(())
         });
 
+        // if a POSIX class wasn't matched, then this must be the beginning of a subclass.
         if !matched {
             let negated = matches_tok!(self.input; TokenKind::Negated);
+
+            // match subclass items
             let mut items = Vec::new();
             while let Some(item) = self.parse_specified_class_item()? {
                 items.push(item);
@@ -656,6 +1059,8 @@ impl<'a> Parser<'a> {
 
             let kind_span = Span::wrap(span_start, span_end);
             let class_kind = ClassKind::Specified(items);
+
+            // create a subclass sclass specifier
             span = Some(kind_span);
             kind = Some(ClassSpecKind::Class(Class {
                 span: kind_span,
@@ -669,12 +1074,35 @@ impl<'a> Parser<'a> {
         Ok(Some(ClassSpec { span, kind }))
     }
 
+    /// Parse a set operation in a class specification
+    ///
+    /// Set operations include:
+    ///
+    /// * difference `A--B`: members of set A that are not in set B
+    /// * symmetric difference `A~~B`: members that are not in both A and B
+    /// * intersection: `A&&B`: members that are in both set A and set B
+    ///
+    /// This parser accepts a [`ClassSpec`] as the left hand side of the operation,
+    /// and matches the right hand side itself. [`parse_spec_item`] parses the left-
+    /// hand-side before optionally parsing a `spec_set` in order to eliminate
+    /// left-recursion and create a left-associative structure.
+    ///
+    /// Multiple subsequent set operations can be matched, e.g.
+    /// `[[:ascii:]--[:upper:]--[:lower:]]`
+    ///
+    /// This parser takes ownership of the left-hand-side, but returns it again if no
+    /// set operation is constructed (due to an operator not being matched).
+    ///
+    /// From grammar:
+    ///
+    /// ```grammar
     /// spec_set ->
-    ///     | '~~' spec_term spec_set
-    ///     | '--' spec_term spec_set
-    ///     | '&&' spec_term spec_set
-    ///     | \e
-    fn parse_class_item_set(&mut self, start: ClassSpec) -> Result<ClassSpec> {
+    ///     | '~~' spec_term spec_set?
+    ///     | '--' spec_term spec_set?
+    ///     | '&&' spec_term spec_set?
+    /// ```
+    pub fn parse_class_item_set(&mut self, start: ClassSpec) -> Result<ClassSpec> {
+        // match a set operator to begin parsing the class spec
         let mut set_kind: Option<TokenKind> = None;
         matches_one!(self.input; [
             (TokenKind::is_symmetrical, |_, kind| {
@@ -691,15 +1119,20 @@ impl<'a> Parser<'a> {
             }),
         ]);
 
+        // unlike `match_one!`, `matches_one!` won't return from the parser if a match isn't
+        // found. If none is found, the left-hand-side should be returned instead since no
+        // set operation will be constructed.
         let Some(set_kind) = set_kind else {
             return Ok(start);
         };
 
+        // parse the right-hand side of the operation
         let end = self.parse_specified_class_term()?;
         let Some(end) = end else {
             return Err(self.input.error(ErrorKind::UnexpectedToken(set_kind, "end of set".to_string())));
         };
 
+        // construct a `ClassSpecKind` depending on which operator was found
         let span = Span::wrap(start.span, end.span);
         let kind = match set_kind {
             TokenKind::Symmetrical => ClassSpecKind::Symmetrical(Symmetrical {
