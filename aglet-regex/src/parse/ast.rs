@@ -53,12 +53,6 @@ pub enum RepetitionKind {
     Range(Range),
 }
 
-pub struct Range {
-    pub span:  Span,
-    pub start: Option<usize>,
-    pub end:   Option<usize>,
-}
-
 impl TryFrom<TokenKind> for RepetitionKind {
     type Error = TokenConvertError;
 
@@ -70,6 +64,12 @@ impl TryFrom<TokenKind> for RepetitionKind {
             _ => Err(TokenConvertError::InvalidTokenForRepetition(value)),
         }
     }
+}
+
+pub struct Range {
+    pub span:  Span,
+    pub start: Option<usize>,
+    pub end:   Option<usize>,
 }
 
 pub struct Boundary {
