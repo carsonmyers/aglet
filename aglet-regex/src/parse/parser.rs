@@ -36,6 +36,9 @@ use crate::tokenize::{self, Token, TokenKind};
 /// item ->
 ///     | DOT
 ///     | LITERAL
+///     | DIGIT_CLASS
+///     | WHITESPACE_CLASS
+///     | WORD_CLASS
 ///     | BOUNDARY
 ///     | group
 ///     | class
@@ -63,6 +66,9 @@ use crate::tokenize::{self, Token, TokenKind};
 ///     | spec_term spec_set?
 /// spec_term ->
 ///     | LITERAL ('-' LITERAL)?
+///     | DIGIT_CLASS
+///     | WHITESPACE_CLASS
+///     | WORD_CLASS
 ///     | '[' POSIX_NAME ']'
 ///     | '[' specified_class ']'
 /// spec_set ->
@@ -366,6 +372,9 @@ impl<'a> Parser<'a> {
     /// item ->
     ///     | DOT
     ///     | LITERAL
+    ///     | DIGIT_CLASS
+    ///     | WHITESPACE_CLASS
+    ///     | WORD_CLASS
     ///     | BOUNDARY
     ///     | group
     ///     | class
@@ -374,6 +383,9 @@ impl<'a> Parser<'a> {
         let res = parse_alts![
             { self.parse_dot() }
             { self.parse_literal() }
+            { self.parse_digit_class() }
+            { self.parse_whitespace_class() }
+            { self.parse_word_class() }
             { self.parse_boundary() }
             { self.parse_group() }
             { self.parse_class() }
@@ -399,6 +411,36 @@ impl<'a> Parser<'a> {
         Ok(Some(Expr {
             span,
             kind: ExprKind::Literal(c),
+        }))
+    }
+
+    /// Parse a digit short class, `\d` or `\D`
+    pub fn parse_digit_class(&mut self) -> Result<Option<Expr>> {
+        match_tok!(self.input; span, TokenKind::Digit(negated));
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Digit(negated),
+        }))
+    }
+
+    /// Parse a whitespace short class, `\s` or `\S`
+    pub fn parse_whitespace_class(&mut self) -> Result<Option<Expr>> {
+        match_tok!(self.input; span, TokenKind::Whitespace(negated));
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::Whitespace(negated),
+        }))
+    }
+
+    /// Parse a word character short class, `\w` or `\W`
+    pub fn parse_word_class(&mut self) -> Result<Option<Expr>> {
+        match_tok!(self.input; span, TokenKind::WordChar(negated));
+
+        Ok(Some(Expr {
+            span,
+            kind: ExprKind::WordChar(negated),
         }))
     }
 
@@ -677,16 +719,18 @@ impl<'a> Parser<'a> {
     /// specified_class ->
     ///     | NEGATED? spec_item+
     /// spec_item ->
-    ///     | spec_term spec_set
+    ///     | spec_term spec_set?
     /// spec_term ->
-    ///     | LITERAL
-    ///     | LITERAL '-' LITERAL
+    ///     | LITERAL ('-' LITERAL)?
+    ///     | DIGIT_CLASS
+    ///     | WHITESPACE_CLASS
+    ///     | WORD_CLASS
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
-    ///     | '~~' spec_term spec_set
-    ///     | '--' spec_item spec_set
-    ///     | '&&' spec_item spec_set
+    ///     | '~~' spec_term spec_set?
+    ///     | '--' spec_item spec_set?
+    ///     | '&&' spec_item spec_set?
     ///     | \e
     /// ```
     pub fn parse_class(&mut self) -> Result<Option<Expr>> {
@@ -869,6 +913,9 @@ impl<'a> Parser<'a> {
     ///     | spec_term spec_set?
     /// spec_term ->
     ///     | LITERAL ('-' LITERAL)?
+    ///     | DIGIT_CLASS
+    ///     | WHITESPACE_CLASS
+    ///     | WORD_CLASS
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
@@ -917,6 +964,9 @@ impl<'a> Parser<'a> {
     ///     | spec_term spec_set?
     /// spec_term ->
     ///     | LITERAL ('-' LITERAL)?
+    ///     | DIGIT_CLASS
+    ///     | WHITESPACE_CLASS
+    ///     | WORD_CLASS
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
@@ -948,6 +998,9 @@ impl<'a> Parser<'a> {
     /// ```grammar
     /// spec_term ->
     ///     | LITERAL ('-' LITERAL)?
+    ///     | DIGIT_CLASS
+    ///     | WHITESPACE_CLASS
+    ///     | WORD_CLASS
     ///     | '[' POSIX_NAME ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
@@ -960,6 +1013,9 @@ impl<'a> Parser<'a> {
     pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
         let res = parse_alts![
             { self.parse_class_term_literal() }
+            { self.parse_class_term_digit() }
+            { self.parse_class_term_whitespace() }
+            { self.parse_class_term_word() }
             { self.parse_class_term_bracket() }
         ];
 
@@ -1006,6 +1062,36 @@ impl<'a> Parser<'a> {
         }
 
         Ok(spec)
+    }
+
+    /// Parse a digit short class, `\d` or `\D`
+    pub fn parse_class_term_digit(&mut self) -> Result<Option<ClassSpec>> {
+        match_tok!(self.input; span, TokenKind::Digit(negated));
+
+        Ok(Some(ClassSpec {
+            span,
+            kind: ClassSpecKind::Digit(negated),
+        }))
+    }
+
+    /// Parse a whitespace short class, `\s` or `\S`
+    pub fn parse_class_term_whitespace(&mut self) -> Result<Option<ClassSpec>> {
+        match_tok!(self.input; span, TokenKind::Whitespace(negated));
+
+        Ok(Some(ClassSpec {
+            span,
+            kind: ClassSpecKind::Whitespace(negated),
+        }))
+    }
+
+    /// Parse a word char short class, `\w` or `\W`
+    pub fn parse_class_term_word(&mut self) -> Result<Option<ClassSpec>> {
+        match_tok!(self.input; span, TokenKind::WordChar(negated));
+
+        Ok(Some(ClassSpec {
+            span,
+            kind: ClassSpecKind::WordChar(negated),
+        }))
     }
 
     /// Parse a specified class item that begins with an opening bracket
@@ -1364,7 +1450,6 @@ mod tests {
         assert!(matches!(expr.kind, ExprKind::Literal('b')));
 
         // TODO: detect stray repetition tokens where they don't belong
-        // TODO: change how flag group is parsed so that it is not repeatable
     }
 
     #[test]
@@ -1465,6 +1550,9 @@ mod tests {
             TokenKind::OpenGroup,
             TokenKind::Literal('b'),
             TokenKind::CloseGroup,
+            TokenKind::Digit(true),
+            TokenKind::Whitespace(false),
+            TokenKind::WordChar(true),
             TokenKind::UnicodeShort('L', true),
             TokenKind::OpenBracket,
             TokenKind::Literal('c'),
@@ -1483,6 +1571,15 @@ mod tests {
 
         let expr = unwrap_parse(p.parse_item());
         assert!(matches!(expr.kind, ExprKind::Group(_)));
+
+        let expr = unwrap_parse(p.parse_item());
+        assert!(matches!(expr.kind, ExprKind::Digit(true)));
+
+        let expr = unwrap_parse(p.parse_item());
+        assert!(matches!(expr.kind, ExprKind::Whitespace(false)));
+
+        let expr = unwrap_parse(p.parse_item());
+        assert!(matches!(expr.kind, ExprKind::WordChar(true)));
 
         let expr = unwrap_parse(p.parse_item());
         assert!(matches!(expr.kind, ExprKind::Class(_)));
@@ -1561,14 +1658,14 @@ mod tests {
 
         let group = get_group(p.parse_group());
         assert!(matches!(group.kind, GroupKind::NonCapturing(_)));
-        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr }) = group.kind else {
+        let GroupKind::NonCapturing(NonCapturingGroup { flags, .. }) = group.kind else {
             panic!("not a non-capturing group");
         };
         assert!(flags.is_none());
 
         let group = get_group(p.parse_group());
         assert!(matches!(group.kind, GroupKind::NonCapturing(_)));
-        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr }) = group.kind else {
+        let GroupKind::NonCapturing(NonCapturingGroup { flags, .. }) = group.kind else {
             panic!("not a non-capturing group");
         };
         assert!(flags.is_some());
@@ -2013,6 +2110,9 @@ mod tests {
             TokenKind::Literal('b'),
             TokenKind::Range,
             TokenKind::Literal('z'),
+            TokenKind::Digit(true),
+            TokenKind::Whitespace(false),
+            TokenKind::WordChar(false),
             TokenKind::OpenBracket,
             TokenKind::ClassName("alpha".to_string(), false),
             TokenKind::CloseBracket,
@@ -2027,6 +2127,15 @@ mod tests {
 
         let spec = get_class_spec(p.parse_specified_class_term());
         assert!(matches!(spec.kind, ClassSpecKind::Range('b', 'z')));
+
+        let spec = get_class_spec(p.parse_specified_class_term());
+        assert!(matches!(spec.kind, ClassSpecKind::Digit(true)));
+
+        let spec = get_class_spec(p.parse_specified_class_term());
+        assert!(matches!(spec.kind, ClassSpecKind::Whitespace(false)));
+
+        let spec = get_class_spec(p.parse_specified_class_term());
+        assert!(matches!(spec.kind, ClassSpecKind::WordChar(false)));
 
         let spec = get_class_spec(p.parse_specified_class_term());
         assert!(matches!(

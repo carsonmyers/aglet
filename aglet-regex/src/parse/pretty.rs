@@ -22,6 +22,27 @@ impl Pretty for ExprKind {
             Self::Repetition(rep) => w.print(rep),
             Self::Any => w.print_ast(".").finish(),
             Self::Literal(c) => w.print_ast("Literal").property(None, c).finish(),
+            Self::Digit(negated) => {
+                let mut printer = w.print_ast("Digit");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
+            Self::Whitespace(negated) => {
+                let mut printer = w.print_ast("Whitespace");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
+            Self::WordChar(negated) => {
+                let mut printer = w.print_ast("WordChar");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
             Self::Boundary(boundary) => w.print(boundary),
             Self::Group(group) => w.print(group),
             Self::Class(class) => w.print(class),
@@ -178,6 +199,27 @@ impl Pretty for ClassSpecKind {
             Self::Difference(difference) => w.print(difference),
             Self::Symmetrical(symmetrical) => w.print(symmetrical),
             Self::Literal(c) => w.print_ast("Literal").property(None, c).finish(),
+            Self::Digit(negated) => {
+                let mut printer = w.print_ast("Digit");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
+            Self::Whitespace(negated) => {
+                let mut printer = w.print_ast("Whitespace");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
+            Self::WordChar(negated) => {
+                let mut printer = w.print_ast("WordChar");
+                if *negated {
+                    printer.property(None, &"negated");
+                }
+                printer.finish()
+            },
             Self::Range(start, end) => w
                 .print_ast("Range")
                 .property(Some("start"), start)
