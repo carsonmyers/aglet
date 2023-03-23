@@ -2,6 +2,7 @@ pub mod ast;
 pub mod error;
 mod input;
 pub mod parser;
+mod pretty;
 
 #[cfg(test)]
 use aglet_text::Span;

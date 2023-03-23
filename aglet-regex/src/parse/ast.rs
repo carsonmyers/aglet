@@ -46,6 +46,7 @@ pub struct Repetition {
     pub item: Box<Expr>,
 }
 
+#[derive(Debug)]
 pub enum RepetitionKind {
     ZeroOrOne,
     ZeroOrMore,
@@ -66,6 +67,7 @@ impl TryFrom<TokenKind> for RepetitionKind {
     }
 }
 
+#[derive(Debug)]
 pub struct Range {
     pub span:  Span,
     pub start: Option<usize>,
@@ -77,6 +79,7 @@ pub struct Boundary {
     pub kind: BoundaryKind,
 }
 
+#[derive(Debug)]
 pub enum BoundaryKind {
     StartOfLine,
     EndOfLine,
@@ -111,7 +114,7 @@ pub enum GroupKind {
     Capturing(CapturingGroup),
     Named(NamedGroup),
     NonCapturing(NonCapturingGroup),
-    Flags(FlagsGroup),
+    Flags(FlagGroup),
 }
 
 pub struct CapturingGroup {
@@ -129,7 +132,7 @@ pub struct NonCapturingGroup {
     pub expr:  Box<Expr>,
 }
 
-pub struct FlagsGroup {
+pub struct FlagGroup {
     pub flags: Flags,
 }
 
@@ -139,6 +142,7 @@ pub struct Flags {
     pub clear_flags: Vec<FlagKind>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum FlagKind {
     CaseInsensitive,
     MultiLine,
@@ -173,52 +177,6 @@ pub struct Class {
 pub enum ClassKind {
     Unicode(UnicodeClass),
     Specified(Vec<ClassSpec>),
-}
-
-pub struct PosixClass {
-    pub span: Span,
-    pub kind: PosixKind,
-}
-
-pub enum PosixKind {
-    AlNum,
-    Alpha,
-    Ascii,
-    Blank,
-    Cntrl,
-    Digit,
-    Graph,
-    Lower,
-    Print,
-    Punct,
-    Space,
-    Upper,
-    Word,
-    XDigit,
-}
-
-impl TryFrom<&str> for PosixKind {
-    type Error = TokenConvertError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "alnum" => Ok(Self::AlNum),
-            "alpha" => Ok(Self::Alpha),
-            "ascii" => Ok(Self::Ascii),
-            "blank" => Ok(Self::Blank),
-            "cntrl" => Ok(Self::Cntrl),
-            "digit" => Ok(Self::Digit),
-            "graph" => Ok(Self::Graph),
-            "lower" => Ok(Self::Lower),
-            "print" => Ok(Self::Print),
-            "punct" => Ok(Self::Punct),
-            "space" => Ok(Self::Space),
-            "upper" => Ok(Self::Upper),
-            "word" => Ok(Self::Word),
-            "xdigit" => Ok(Self::XDigit),
-            _ => Err(TokenConvertError::InvalidPosixClass(value.to_string())),
-        }
-    }
 }
 
 pub struct UnicodeClass {
@@ -258,6 +216,53 @@ pub struct Symmetrical {
     pub span:  Span,
     pub left:  Box<ClassSpec>,
     pub right: Box<ClassSpec>,
+}
+
+pub struct PosixClass {
+    pub span: Span,
+    pub kind: PosixKind,
+}
+
+#[derive(Debug)]
+pub enum PosixKind {
+    AlNum,
+    Alpha,
+    Ascii,
+    Blank,
+    Cntrl,
+    Digit,
+    Graph,
+    Lower,
+    Print,
+    Punct,
+    Space,
+    Upper,
+    Word,
+    XDigit,
+}
+
+impl TryFrom<&str> for PosixKind {
+    type Error = TokenConvertError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "alnum" => Ok(Self::AlNum),
+            "alpha" => Ok(Self::Alpha),
+            "ascii" => Ok(Self::Ascii),
+            "blank" => Ok(Self::Blank),
+            "cntrl" => Ok(Self::Cntrl),
+            "digit" => Ok(Self::Digit),
+            "graph" => Ok(Self::Graph),
+            "lower" => Ok(Self::Lower),
+            "print" => Ok(Self::Print),
+            "punct" => Ok(Self::Punct),
+            "space" => Ok(Self::Space),
+            "upper" => Ok(Self::Upper),
+            "word" => Ok(Self::Word),
+            "xdigit" => Ok(Self::XDigit),
+            _ => Err(TokenConvertError::InvalidPosixClass(value.to_string())),
+        }
+    }
 }
 
 pub struct StringSpan {
