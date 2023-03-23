@@ -13,13 +13,18 @@ impl PrettyPrinter {
         }
     }
 
-    pub fn print(&mut self, item: &impl Pretty) -> Result {
+    pub fn print(&self, item: &impl Pretty) -> Result {
+        let out = self.print_buf(item)?;
+        println!("{}", out);
+        Ok(())
+    }
+
+    fn print_buf(&self, item: &impl Pretty) -> std::result::Result<String, Error> {
         let mut buf = String::new();
         let mut writer = Writer::new(&mut buf).with_indent(&self.indent);
         item.print(&mut writer)?;
 
-        println!("{}", buf);
-        Ok(())
+        Ok(buf)
     }
 }
 
@@ -88,9 +93,13 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         AstPrinter { writer, result }
     }
 
-    pub fn property(&mut self, name: &str, value: &impl fmt::Debug) -> &mut Self {
+    pub fn property(&mut self, name: Option<&str>, value: &impl fmt::Debug) -> &mut Self {
         self.result = self.result.and_then(|_| {
-            write!(self.writer, " {}={:?}", name, value)?;
+            if let Some(name) = name {
+                write!(self.writer, " {}={:?}", name, value)?;
+            } else {
+                write!(self.writer, " {:?}", value)?;
+            }
             Ok(())
         });
 
@@ -125,6 +134,12 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
 
 pub trait Pretty {
     fn print(&self, w: &mut Writer<'_>) -> Result;
+}
+
+impl<T: fmt::Debug> Pretty for Vec<T> {
+    fn print(&self, w: &mut Writer<'_>) -> Result {
+        write!(w, "{:?}", self).map_err(|err| err.into())
+    }
 }
 
 pub type Result = std::result::Result<(), Error>;
@@ -187,7 +202,7 @@ mod tests {
     impl Pretty for Number {
         fn print(&self, w: &mut Writer<'_>) -> Result {
             w.print_ast("Number")
-                .property("value", &self.value)
+                .property(Some("value"), &self.value)
                 .finish()
         }
     }
@@ -213,6 +228,17 @@ mod tests {
         };
 
         let mut printer = PrettyPrinter::new("  ");
-        printer.print(&expr);
+
+        let expected = concat!(
+            "(Add\n",
+            "  (Add\n",
+            "    (Number value=10)\n",
+            "    (Number value=-1))\n",
+            "  (Number value = 6))\n"
+        );
+        let out = printer.print_buf(&expr);
+        assert!(out.is_ok());
+        let out = out.unwrap();
+        assert_eq!(out, expected);
     }
 }
