@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0.40"
+aglet-text = { path = "../aglet-text" }
+colored = "2.0.0"
