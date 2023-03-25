@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::fmt::{self, Write};
-use std::rc::Rc;
 
 use aglet_text::Span;
 use colored::control::ShouldColorize;
@@ -14,13 +12,13 @@ pub struct Writer<'a> {
     buf:                  &'a mut (dyn Write + 'a),
     on_newline:           bool,
     indent:               String,
-    pub(crate) column:    Rc<RefCell<&'a mut (dyn Write + 'a)>>,
+    pub(crate) spans:     Vec<Option<Span>>,
     pub(crate) level:     u32,
     pub(crate) use_color: bool,
 }
 
 impl<'a> Writer<'a> {
-    pub fn new<T>(buf: &'a mut T, column: &'a mut T) -> Self
+    pub fn new<T>(buf: &'a mut T) -> Self
     where
         T: Write + 'a,
     {
@@ -28,7 +26,7 @@ impl<'a> Writer<'a> {
             buf,
             on_newline: true,
             indent: "\t".to_string(),
-            column: Rc::new(RefCell::new(column)),
+            spans: Vec::new(),
             level: 0,
             use_color: ShouldColorize::from_env().should_colorize(),
         }

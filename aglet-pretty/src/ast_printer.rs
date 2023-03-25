@@ -21,24 +21,18 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         span: Option<Span>,
         color: Option<Color>,
     ) -> Self {
-        let span_text = if let Some(span) = span {
-            format!("{:?}", span)
-        } else {
-            String::new()
-        };
-
         let result = Ok(()).and_then(|_| {
             if writer.use_color {
                 let color = color.unwrap_or(DEFAULT_COLOR);
                 write!(writer, "({}", name.color(color))?;
-                writeln!(writer.column.borrow_mut(), "{}", span_text.color(color))?;
             } else {
                 write!(writer, "({}", name)?;
-                writeln!(writer.column.borrow_mut(), "{}", span_text)?;
             }
 
             Ok(())
         });
+
+        writer.spans.push(span);
 
         AstPrinter { writer, result }
     }
@@ -126,7 +120,8 @@ mod tests {
     use aglet_text::Span;
 
     use super::*;
-    use crate::Color;
+    use crate::ColorWhen;
+    use crate::PrettyPrintSettings;
     use crate::PrettyPrinter;
 
     struct Expr {
@@ -215,14 +210,18 @@ mod tests {
             }),
         };
 
-        let printer = PrettyPrinter::new("  ", Color::Never);
+        let printer = PrettyPrinter::new(
+            PrettyPrintSettings::default()
+                .align(false)
+                .color_when(ColorWhen::Never),
+        );
 
         let expected = concat!(
-            "1:1[0]-1:12[11]  \t(Add\n",
-            "1:1[0]-1:8[7]    \t  (Add\n",
-            "1:1[0]-1:3[2]    \t    (Number value=10)\n",
-            "1:6[5]-1:8[7]    \t    (Number value=-1))\n",
-            "1:11[10]-1:12[11]\t  (Number value=6))"
+            "1:1[0] - 1:12[11]:\t(Add\n",
+            "1:1[0] - 1:8[7]:\t  (Add\n",
+            "1:1[0] - 1:3[2]:\t    (Number value=10)\n",
+            "1:6[5] - 1:8[7]:\t    (Number value=-1))\n",
+            "1:11[10] - 1:12[11]:\t  (Number value=6))"
         );
 
         let out = printer.print_buf(&expr);

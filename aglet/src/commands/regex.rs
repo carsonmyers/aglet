@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-use aglet_pretty::{Color, PrettyPrinter};
+use aglet_pretty::{ColorWhen, PrettyPrintSettings, PrettyPrinter};
 use aglet_regex::{Parser, Tokenizer};
 use clap::Args;
+use colored::control::ShouldColorize;
 use colored::Colorize;
 use eyre::{eyre, Result};
 use itertools::Itertools;
@@ -19,7 +20,25 @@ pub struct RegexArgs {
     #[arg(short, long)]
     ast: bool,
 
-    /// Run test on input
+    /// Display the span of each token or AST node
+    #[arg(short, long)]
+    spans: bool,
+
+    /// Include alignment spacing in the spans column
+    #[arg(long)]
+    no_align: bool,
+
+    /// Disable colour output
+    #[arg(long)]
+    no_color: bool,
+
+    /// Force color output
+    #[arg(long)]
+    force_color: bool,
+
+    /// Use test mode - generate test output or test input data.
+    ///
+    /// Implies --no_color, --no_align, --ast, and --tokens
     #[arg(short = 'T', long)]
     test: bool,
 
@@ -28,13 +47,23 @@ pub struct RegexArgs {
     out: Option<PathBuf>,
 }
 
-pub fn run(input: Input, _args: RegexArgs) -> Result<()> {
+pub fn run(input: Input, args: RegexArgs) -> Result<()> {
     let is_stdin = input.is_stdin();
     let iter = SectionIterator::new(Box::new(input), !is_stdin);
 
+    let color_supported = ShouldColorize::from_env().should_colorize();
+    let color_when = match (color_supported, args.no_color, args.force_color) {
+        (true, false, false) => ColorWhen::Auto,
+        (_, _, true) => ColorWhen::Always,
+        _ => ColorWhen::Never,
+    };
+
     let printer = PrettyPrinter::new(
-        "\u{2575}   ".bright_black().to_string().as_ref(),
-        Color::Always,
+        PrettyPrintSettings::default()
+            .indent("\u{254E}   ".bright_black().to_string().as_ref())
+            .color_when(color_when)
+            .align(!args.no_align)
+            .include_spans(args.spans),
     );
     for section in iter {
         let section = section?;
@@ -43,9 +72,12 @@ pub fn run(input: Input, _args: RegexArgs) -> Result<()> {
         let ast = Parser::new(tokens.into_iter()).parse()?;
 
         if !is_stdin {
-            println!("{}", section.input);
+            println!("{}\n", section.input);
         }
-        printer.print(&ast)?;
+
+        if args.ast {
+            printer.print(&ast)?;
+        }
         println!("");
     }
     Ok(())

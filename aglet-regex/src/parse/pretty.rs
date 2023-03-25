@@ -130,8 +130,8 @@ impl Pretty for Repetition {
 
 impl Pretty for Boundary {
     fn print(&self, w: &mut Writer<'_>) -> Result {
-        w.print_ast("Boundary", Some(self.span), COLOR_BOUNDARY)
-            .property(Some("kind"), &self.kind, None)
+        let boundary_title = format!("{:?}", self.kind);
+        w.print_ast(boundary_title.as_ref(), Some(self.span), COLOR_BOUNDARY)
             .finish()
     }
 }
