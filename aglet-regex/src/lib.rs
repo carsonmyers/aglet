@@ -1,8 +1,10 @@
+pub mod error;
 pub mod parse;
 pub mod tokenize;
 
-use parse::{ast::Ast, Parser};
-use tokenize::{Token, Tokenizer};
+pub use error::Error;
+pub use parse::{ast::Ast, Parser};
+pub use tokenize::{Token, Tokenizer};
 
 pub fn tokenize<S: AsRef<str>>(input: &str) -> Result<Vec<Token>, tokenize::Error> {
     let tr = Tokenizer::new(input);

@@ -39,6 +39,12 @@ impl fmt::Debug for Span {
     }
 }
 
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.start)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Default)]
 pub struct Position {
     pub offset: usize,
@@ -84,5 +90,11 @@ impl Position {
 impl fmt::Debug for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}[{}]", self.line, self.column, self.offset)
+    }
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "line {}, col {}", self.line, self.column)
     }
 }

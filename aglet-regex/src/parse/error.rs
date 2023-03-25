@@ -1,4 +1,5 @@
 use std::convert::From;
+use std::fmt;
 use std::result;
 
 use aglet_text::Span;
@@ -8,10 +9,16 @@ use crate::tokenize;
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub struct Error {
     pub span: Span,
     pub kind: ErrorKind,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}) {}", self.span, self.kind)
+    }
 }
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]

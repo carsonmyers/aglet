@@ -1,7 +1,7 @@
 [package]
 name = "aglet"
 version = "0.1.0"
-description = "parser generator and language building tools"
+description = "Parser generator and language building tools"
 repository = "https://github.com/carsonmyers/aglet"
 readme = "../README.md"
 license-file = "../LICENSE.md"
@@ -12,8 +12,20 @@ workspace = ".."
 edition = "2018"
 
 [lib]
+name = "aglet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aglet"
+path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4.1.13", features = ["derive"] }
 color-eyre = "~0.5"
+itertools = "0.10.5"
 thiserror = "^1"
-bitmatch = "0.1.1"
+aglet-regex = { path = "../aglet-regex" }
+aglet-text = { path = "../aglet-text" }
+aglet-pretty = { path = "../aglet-pretty" }
+eyre = "0.6.8"
+colored = "2.0.0"

@@ -7,6 +7,8 @@ use crate::Pretty;
 use crate::Result;
 use crate::Writer;
 
+const DEFAULT_COLOR: Color = Color::White;
+
 pub struct AstPrinter<'a, 'b: 'a> {
     writer: &'a mut Writer<'b>,
     result: Result,
@@ -26,13 +28,15 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         };
 
         let result = Ok(()).and_then(|_| {
-            if let (Some(color), true) = (color, writer.use_color) {
+            if writer.use_color {
+                let color = color.unwrap_or(DEFAULT_COLOR);
                 write!(writer, "({}", name.color(color))?;
                 writeln!(writer.column.borrow_mut(), "{}", span_text.color(color))?;
             } else {
                 write!(writer, "({}", name)?;
                 writeln!(writer.column.borrow_mut(), "{}", span_text)?;
             }
+
             Ok(())
         });
 
@@ -52,20 +56,35 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
                 String::new()
             };
 
-            if let (Some(color), true) = (color, self.writer.use_color) {
+            if self.writer.use_color {
+                let color = color.unwrap_or(DEFAULT_COLOR);
                 write!(
                     self.writer,
                     " {}{}",
-                    name_text.bright_black(),
+                    name_text.truecolor(150, 150, 150).italic(),
                     format!("{:?}", value).color(color)
                 )?;
             } else {
                 write!(self.writer, " {}{:?}", name_text, value)?;
             }
+
             Ok(())
         });
 
         self
+    }
+
+    pub fn maybe_property(
+        &mut self,
+        name: Option<&str>,
+        value: Option<&impl fmt::Debug>,
+        color: Option<Color>,
+    ) -> &mut Self {
+        if let Some(value) = value {
+            self.property(name, value, color)
+        } else {
+            self
+        }
     }
 
     pub fn child(&mut self, name: Option<&str>, item: &impl Pretty) -> &mut Self {
@@ -86,6 +105,14 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         self
     }
 
+    pub fn children(&mut self, items: &Vec<impl Pretty>) -> &mut Self {
+        for item in items {
+            self.child(None, item);
+        }
+
+        self
+    }
+
     pub fn finish(&mut self) -> Result {
         self.result.and_then(|_| {
             write!(self.writer, ")")?;
@@ -99,6 +126,7 @@ mod tests {
     use aglet_text::Span;
 
     use super::*;
+    use crate::Color;
     use crate::PrettyPrinter;
 
     struct Expr {
@@ -187,7 +215,7 @@ mod tests {
             }),
         };
 
-        let printer = PrettyPrinter::new("  ");
+        let printer = PrettyPrinter::new("  ", Color::Never);
 
         let expected = concat!(
             "1:1[0]-1:12[11]  \t(Add\n",

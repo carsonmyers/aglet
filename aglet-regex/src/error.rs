@@ -1,9 +1,11 @@
-use color_eyre::{
-    eyre::{eyre, Report}
-};
-use thiserror::Error;
+use crate::parse;
+use crate::tokenize;
 
-#[derive(Error, Debug)]
-pub enum TokenizeError {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("tokenizer error: {0}")]
+    TokenizerError(#[from] tokenize::Error),
 
+    #[error("parser error: {0}")]
+    ParserError(#[from] parse::Error),
 }

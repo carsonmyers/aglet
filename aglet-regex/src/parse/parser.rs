@@ -549,6 +549,7 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr()?;
 
         Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
+            span:  expr.span,
             flags: None,
             expr:  Box::new(expr),
         })))
@@ -587,6 +588,7 @@ impl<'a> Parser<'a> {
         let clear_flags = self.parse_flags(clear_flags)?;
 
         Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
+            span:  Span::wrap(span, expr.span),
             flags: Some(Flags {
                 span,
                 set_flags,
@@ -610,6 +612,7 @@ impl<'a> Parser<'a> {
         let name = StringSpan { span, value: name };
 
         Ok(Some(GroupKind::Named(NamedGroup {
+            span: Span::wrap(span, expr.span),
             name,
             expr: Box::new(expr),
         })))
@@ -677,6 +680,7 @@ impl<'a> Parser<'a> {
         self.group_index += 1;
 
         Ok(Some(GroupKind::Capturing(CapturingGroup {
+            span: expr.span,
             index,
             expr: Box::new(expr),
         })))
@@ -938,7 +942,20 @@ impl<'a> Parser<'a> {
         expect_tok!(self.input, "end of character class `]`"; span_end, TokenKind::CloseBracket);
 
         let span = Span::wrap(span_start, span_end);
-        let kind = ClassKind::Specified(items);
+        let inner_span_start = items
+            .first()
+            .map(|item| item.span.start)
+            .unwrap_or(span_start.end);
+        let inner_span_end = items
+            .last()
+            .map(|item| item.span.end)
+            .unwrap_or(span_end.start);
+        let inner_span = Span::from(inner_span_start, inner_span_end);
+
+        let kind = ClassKind::Specified(SpecifiedClass {
+            span:  inner_span,
+            items: items,
+        });
 
         Ok(Some(Expr {
             span: span,
@@ -1151,8 +1168,20 @@ impl<'a> Parser<'a> {
 
             expect_tok!(self.input, "end of character class `]`"; span_end, TokenKind::CloseBracket);
 
+            let inner_span_start = items
+                .first()
+                .map(|item| item.span.start)
+                .unwrap_or(span_start.end);
+            let inner_span_end = items
+                .last()
+                .map(|item| item.span.end)
+                .unwrap_or(span_end.start);
+            let inner_span = Span::from(inner_span_start, inner_span_end);
             let kind_span = Span::wrap(span_start, span_end);
-            let class_kind = ClassKind::Specified(items);
+            let class_kind = ClassKind::Specified(SpecifiedClass {
+                span:  inner_span,
+                items: items,
+            });
 
             // create a subclass sclass specifier
             span = Some(kind_span);
@@ -1738,7 +1767,7 @@ mod tests {
         };
         assert!(matches!(kind, GroupKind::NonCapturing(_)));
 
-        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr }) = kind else {
+        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr, .. }) = kind else {
             panic!("non a non-capturing group");
         };
         assert!(flags.is_none());
@@ -1759,7 +1788,7 @@ mod tests {
         };
         assert!(matches!(kind, GroupKind::NonCapturing(_)));
 
-        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr }) = kind else {
+        let GroupKind::NonCapturing(NonCapturingGroup { flags, expr, .. }) = kind else {
             panic!("non a non-capturing group");
         };
         assert!(flags.is_some());
@@ -1788,7 +1817,7 @@ mod tests {
         };
         assert!(matches!(kind, GroupKind::Named(_)));
 
-        let GroupKind::Named(NamedGroup { name, expr }) = kind else {
+        let GroupKind::Named(NamedGroup { name, expr, .. }) = kind else {
             panic!("not a named group");
         };
         assert_eq!(name.value, "name".to_string());
@@ -2039,7 +2068,7 @@ mod tests {
         assert_eq!(class.span.end.column, 6);
         assert_eq!(class.span.end.offset, 5);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
-        if let ClassKind::Specified(items) = class.kind {
+        if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
             assert_eq!(items[0].span.start.column, 2);
@@ -2059,7 +2088,7 @@ mod tests {
         assert_eq!(class.span.end.column, 12);
         assert_eq!(class.span.end.offset, 11);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
-        if let ClassKind::Specified(items) = class.kind {
+        if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
             assert_eq!(items[0].span.start.column, 8);

@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 use aglet_text::Span;
 
@@ -49,7 +50,6 @@ pub struct Repetition {
     pub item: Box<Expr>,
 }
 
-#[derive(Debug)]
 pub enum RepetitionKind {
     ZeroOrOne,
     ZeroOrMore,
@@ -70,7 +70,6 @@ impl TryFrom<TokenKind> for RepetitionKind {
     }
 }
 
-#[derive(Debug)]
 pub struct Range {
     pub span:  Span,
     pub start: Option<usize>,
@@ -121,16 +120,19 @@ pub enum GroupKind {
 }
 
 pub struct CapturingGroup {
+    pub span:  Span,
     pub index: usize,
     pub expr:  Box<Expr>,
 }
 
 pub struct NamedGroup {
+    pub span: Span,
     pub name: StringSpan,
     pub expr: Box<Expr>,
 }
 
 pub struct NonCapturingGroup {
+    pub span:  Span,
     pub flags: Option<Flags>,
     pub expr:  Box<Expr>,
 }
@@ -179,13 +181,18 @@ pub struct Class {
 
 pub enum ClassKind {
     Unicode(UnicodeClass),
-    Specified(Vec<ClassSpec>),
+    Specified(SpecifiedClass),
 }
 
 pub struct UnicodeClass {
     pub span:  Span,
     pub name:  Option<StringSpan>,
     pub value: StringSpan,
+}
+
+pub struct SpecifiedClass {
+    pub span:  Span,
+    pub items: Vec<ClassSpec>,
 }
 
 pub struct ClassSpec {

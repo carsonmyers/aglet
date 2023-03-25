@@ -1,13 +1,20 @@
+use std::fmt;
 use std::result;
 
 use aglet_text::Span;
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub struct Error {
     pub span: Span,
     pub kind: ErrorKind,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}) {}", self.span, self.kind)
+    }
 }
 
 #[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
@@ -44,7 +51,9 @@ pub enum ErrorKind {
 }
 
 impl From<StateError> for ErrorKind {
-    fn from(err: StateError) -> Self { ErrorKind::InternalStateError(err) }
+    fn from(err: StateError) -> Self {
+        ErrorKind::InternalStateError(err)
+    }
 }
 
 #[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]

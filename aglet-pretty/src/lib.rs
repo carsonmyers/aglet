@@ -2,20 +2,20 @@ mod ast_printer;
 mod error;
 mod writer;
 
-use std::fmt::{self, Write};
-
 use ast_printer::AstPrinter;
 pub use error::*;
-use writer::Writer;
+pub use writer::Writer;
 
 pub struct PrettyPrinter {
     indent: String,
+    color:  Color,
 }
 
 impl PrettyPrinter {
-    pub fn new(indent: &'_ str) -> Self {
+    pub fn new(indent: &'_ str, color: Color) -> Self {
         Self {
             indent: indent.to_string(),
+            color,
         }
     }
 
@@ -30,6 +30,16 @@ impl PrettyPrinter {
         let mut col = String::new();
 
         let mut writer = Writer::new(&mut buf, &mut col).with_indent(&self.indent);
+        match self.color {
+            Color::Always => {
+                writer.use_color = true;
+            },
+            Color::Never => {
+                writer.use_color = false;
+            },
+            _ => (),
+        }
+
         item.print(&mut writer)?;
 
         let col_lines = col.lines();
@@ -47,12 +57,12 @@ impl PrettyPrinter {
     }
 }
 
-pub trait Pretty {
-    fn print(&self, w: &mut Writer<'_>) -> Result;
+pub enum Color {
+    Always,
+    Auto,
+    Never,
 }
 
-impl<T: fmt::Debug> Pretty for Vec<T> {
-    fn print(&self, w: &mut Writer<'_>) -> Result {
-        write!(w, "{:?}", self).map_err(|err| err.into())
-    }
+pub trait Pretty {
+    fn print(&self, w: &mut Writer<'_>) -> Result;
 }
