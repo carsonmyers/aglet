@@ -61,8 +61,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// Create an [`AstPrinter`](crate::AstPrinter) for printing a nested
-    /// abstract syntax tree structure.
+    /// Create an printer for a nested abstract syntax tree structure.
     ///
     /// # Arguments
     ///
@@ -78,7 +77,7 @@ impl<'a> Writer<'a> {
         AstPrinter::new(self, name, span, color)
     }
 
-    /// Create a [`TokenPrinter`](crate::TokenPrinter) for printing a token stream.
+    /// Create a printer for a token stream.
     ///
     /// # Arguments
     ///
