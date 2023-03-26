@@ -14,7 +14,7 @@ const PARAMETER_COLOR: Color = Color::TrueColor {
     b: 150,
 };
 
-/// Print an abstract syntax tree
+/// Printer for an abstract syntax tree
 ///
 /// Tree nodes can be printed with properties and children, with children being
 /// printed indented as another node.
