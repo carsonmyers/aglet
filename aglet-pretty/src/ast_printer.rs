@@ -32,7 +32,7 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
             Ok(())
         });
 
-        writer.spans.push(span);
+        writer.add_span(span);
 
         AstPrinter { writer, result }
     }
@@ -210,9 +210,10 @@ mod tests {
             }),
         };
 
-        let printer = PrettyPrinter::new(
+        let mut printer = PrettyPrinter::new(
             PrettyPrintSettings::default()
                 .align(false)
+                .include_meta(false)
                 .color_when(ColorWhen::Never),
         );
 
@@ -224,7 +225,7 @@ mod tests {
             "1:11[10] - 1:12[11]:\t  (Number value=6))"
         );
 
-        let out = printer.print_buf(&expr);
+        let out = printer.print(&expr).expect("print failed").finish();
         assert!(out.is_ok());
         let out = out.unwrap();
         assert_eq!(out, expected);

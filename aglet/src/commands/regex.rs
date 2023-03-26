@@ -24,6 +24,10 @@ pub struct RegexArgs {
     #[arg(short, long)]
     spans: bool,
 
+    /// Include metadata column for each token or AST node
+    #[arg(short, long)]
+    meta: bool,
+
     /// Include alignment spacing in the spans column
     #[arg(long)]
     no_align: bool,
@@ -58,27 +62,43 @@ pub fn run(input: Input, args: RegexArgs) -> Result<()> {
         _ => ColorWhen::Never,
     };
 
-    let printer = PrettyPrinter::new(
-        PrettyPrintSettings::default()
-            .indent("\u{254E}   ".bright_black().to_string().as_ref())
-            .color_when(color_when)
-            .align(!args.no_align)
-            .include_spans(args.spans),
-    );
     for section in iter {
         let section = section?;
-
-        let tokens = Tokenizer::new(section.input.as_ref()).collect_vec();
-        let ast = Parser::new(tokens.into_iter()).parse()?;
 
         if !is_stdin {
             println!("{}\n", section.input);
         }
 
-        if args.ast {
-            printer.print(&ast)?;
+        let printer_settings = PrettyPrintSettings::default()
+            .indent("\u{254E}   ".bright_black().to_string().as_ref())
+            .color_when(color_when)
+            .align(!args.no_align)
+            .include_spans(args.spans);
+
+        if args.tokens {
+            let mut printer = PrettyPrinter::new(printer_settings.clone());
+            let tokenizer = Tokenizer::new(section.input.as_ref());
+            if args.meta {
+                for token_stack in tokenizer.into_token_stack_iter() {
+                    printer.print(&token_stack?)?;
+                }
+            } else {
+                for token in tokenizer {
+                    printer.print(&token?)?;
+                }
+            }
+
+            println!("TOKENS:\n{}\n", printer.finish()?);
         }
-        println!("");
+
+        if args.ast {
+            let mut printer = PrettyPrinter::new(printer_settings.clone());
+
+            let tokens = Tokenizer::new(section.input.as_ref()).collect_vec();
+            let ast = Parser::new(tokens.into_iter()).parse()?;
+
+            println!("AST:\n{}\n", printer.print(&ast)?.finish()?);
+        }
     }
     Ok(())
 }

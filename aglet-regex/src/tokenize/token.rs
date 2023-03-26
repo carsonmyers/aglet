@@ -2,15 +2,38 @@ use std::fmt;
 
 use aglet_text::Span;
 
+use crate::tokenize::state::StateStack;
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,
 }
 
+impl Token {
+    pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
+        Token {
+            kind,
+            span: Span::from_offsets(start, end),
+        }
+    }
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("tok")
+            .field(&self.span)
+            .field(&self.kind)
+            .finish()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TokenKind {
     Literal(char),
+    Digit(bool),
+    Whitespace(bool),
+    WordChar(bool),
     Dot,
     Alternate,
 
@@ -53,19 +76,7 @@ pub enum TokenKind {
     UnicodePropName(String),
     UnicodeEqual(bool),
     UnicodePropValue(String),
-    Digit(bool),
-    Whitespace(bool),
-    WordChar(bool),
     ClassName(String, bool),
-}
-
-impl Token {
-    pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
-        Token {
-            kind,
-            span: Span::from_offsets(start, end),
-        }
-    }
 }
 
 impl TokenKind {
@@ -114,11 +125,8 @@ impl TokenKind {
     }
 }
 
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("tok")
-            .field(&self.span)
-            .field(&self.kind)
-            .finish()
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenStack {
+    pub token: Token,
+    pub stack: StateStack,
 }

@@ -1,7 +1,4 @@
-use std::io::Write;
 use std::iter;
-
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 use crate::tokenize::error::*;
 use crate::tokenize::input::*;
@@ -12,11 +9,9 @@ use crate::tokenize::{assert_next_err, assert_next_none, assert_next_tok};
 
 /// Tokenizer for a regular expression
 pub struct Tokenizer<'a> {
-    input:            Input<'a>,
-    state:            StateStack,
-    last_token_kind:  Option<TokenKind>,
-    print_debug_info: bool,
-    dbgout:           StandardStream,
+    input:           Input<'a>,
+    state:           StateStack,
+    last_token_kind: Option<TokenKind>,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -36,36 +31,10 @@ impl<'a> Tokenizer<'a> {
     /// ```
     pub fn new<T: Into<&'a str>>(input: T) -> Self {
         Tokenizer {
-            input:            Input::new(input),
-            state:            StateStack::new(),
-            last_token_kind:  None,
-            print_debug_info: false,
-            dbgout:           StandardStream::stdout(ColorChoice::Always),
+            input:           Input::new(input),
+            state:           StateStack::new(),
+            last_token_kind: None,
         }
-    }
-
-    /// Cause the tokenizer to print debugging information for every token
-    /// output. This includes each token, the span information, and the
-    /// internal state stack.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use aglet_regex::tokenize::*;
-    /// let mut tr = Tokenizer::new("a*");
-    /// tr.set_debug();
-    ///
-    /// // 1:1[0]-1:2[1]                  Literal('a')                   -> [State(Main, [])]
-    /// let _ = tr.next_token();
-    ///
-    /// // 1:2[1]-1:3[2]                  ZeroOrMore                     -> [State(Main, [])]
-    /// let _ = tr.next_token();
-    ///
-    /// // !!!                            Err(EndOfFile)                 -> [State(Main, [])]
-    /// let _ = tr.next_token();
-    /// ```
-    pub fn set_debug(&mut self) {
-        self.print_debug_info = true;
     }
 
     /// Get the next token from the input. A token includes both the kind of the
@@ -101,36 +70,21 @@ impl<'a> Tokenizer<'a> {
             Err(err) => Err(self.input.error(err.into())),
         };
 
-        if self.print_debug_info {
-            if let Ok(ref tok) = token {
-                let _ = writeln!(
-                    &mut self.dbgout,
-                    "{:<30} {:<30} -> {:?}",
-                    format!("{:?}", &tok.span),
-                    format!("{:?}", &tok.kind),
-                    self.state
-                );
-            } else {
-                let err = token.clone().unwrap_err();
-                let _ = self
-                    .dbgout
-                    .set_color(ColorSpec::new().set_fg(Some(Color::Red)));
-
-                let _ = writeln!(
-                    &mut self.dbgout,
-                    "{:<30} {:<30} -> {:?}",
-                    format!("{:?}", &err.span),
-                    format!("{:?}", &err.kind),
-                    self.state
-                );
-
-                let _ = self.dbgout.set_color(&ColorSpec::new());
-            }
-        }
-
         self.last_token_kind = token.as_ref().ok().map(|t| t.kind.clone());
-
         token
+    }
+
+    /// Get the next token from the input, along with the current state stack.
+    pub fn next_token_stack(&mut self) -> Result<TokenStack> {
+        let token = self.next_token()?;
+        let stack = self.state.clone();
+
+        Ok(TokenStack { token, stack })
+    }
+
+    /// Create an iterator over
+    pub fn into_token_stack_iter(self) -> TokenStackIterator<'a> {
+        TokenStackIterator { tokenizer: self }
     }
 
     /// Get a token in the `Main` state
@@ -973,8 +927,27 @@ impl<'a> Tokenizer<'a> {
 
 impl<'a> iter::Iterator for Tokenizer<'a> {
     type Item = Result<Token>;
+
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
+            Err(Error {
+                kind: ErrorKind::EndOfFile,
+                ..
+            }) => None,
+            result @ _ => Some(result),
+        }
+    }
+}
+
+pub struct TokenStackIterator<'a> {
+    tokenizer: Tokenizer<'a>,
+}
+
+impl<'a> Iterator for TokenStackIterator<'a> {
+    type Item = Result<TokenStack>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.tokenizer.next_token_stack() {
             Err(Error {
                 kind: ErrorKind::EndOfFile,
                 ..

@@ -2,8 +2,9 @@ use std::fmt;
 
 use crate::tokenize::error::StateError;
 
-pub(crate) struct StateStack {
-    pub(crate) stack: Vec<StateFlags>,
+#[derive(Clone, PartialEq)]
+pub struct StateStack {
+    pub stack: Vec<StateFlags>,
 }
 
 impl StateStack {
@@ -84,8 +85,9 @@ impl fmt::Debug for StateStack {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum State {
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub enum State {
+    #[default]
     Main,
     Group,
     Class,
@@ -94,12 +96,8 @@ pub(crate) enum State {
     UnicodeProperties,
 }
 
-impl Default for State {
-    fn default() -> Self { State::Main }
-}
-
-#[derive(Default, Clone, Copy)]
-pub(crate) struct Flags {
+#[derive(Default, Clone, Copy, PartialEq)]
+pub struct Flags {
     pub(crate) ignore_space: bool,
 }
 
@@ -114,17 +112,19 @@ impl fmt::Debug for Flags {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct StateFlags {
+#[derive(Default, Clone, Copy, PartialEq)]
+pub struct StateFlags {
     state: State,
     flags: Flags,
 }
 
 impl fmt::Debug for StateFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("State")
-            .field(&self.state)
-            .field(&self.flags)
-            .finish()
+        write!(f, "{:?}", self.state)?;
+        if self.flags.ignore_space {
+            write!(f, "(x)")?;
+        }
+
+        Ok(())
     }
 }

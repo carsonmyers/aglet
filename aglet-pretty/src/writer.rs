@@ -7,26 +7,33 @@ use colored::Color;
 use crate::AstPrinter;
 use crate::Pretty;
 use crate::Result;
+use crate::TokenPrinter;
 
 pub struct Writer<'a> {
     buf:                  &'a mut (dyn Write + 'a),
+    spans:                &'a mut Vec<Option<Span>>,
+    meta:                 &'a mut Vec<Option<String>>,
     on_newline:           bool,
     indent:               String,
-    pub(crate) spans:     Vec<Option<Span>>,
     pub(crate) level:     u32,
     pub(crate) use_color: bool,
 }
 
 impl<'a> Writer<'a> {
-    pub fn new<T>(buf: &'a mut T) -> Self
+    pub fn new<T>(
+        buf: &'a mut T,
+        spans: &'a mut Vec<Option<Span>>,
+        meta: &'a mut Vec<Option<String>>,
+    ) -> Self
     where
         T: Write + 'a,
     {
         Self {
             buf,
+            spans,
+            meta,
             on_newline: true,
             indent: "\t".to_string(),
-            spans: Vec::new(),
             level: 0,
             use_color: ShouldColorize::from_env().should_colorize(),
         }
@@ -54,8 +61,26 @@ impl<'a> Writer<'a> {
         AstPrinter::new(self, name, span, color)
     }
 
+    pub fn print_token<'b>(
+        &'b mut self,
+        name: &str,
+        span: Option<Span>,
+        stack: Option<String>,
+        color: Option<Color>,
+    ) -> TokenPrinter<'b, 'a> {
+        TokenPrinter::new(self, name, span, stack, color)
+    }
+
     pub fn print(&mut self, item: &impl Pretty) -> Result {
         item.print(self)
+    }
+
+    pub fn add_span(&mut self, span: Option<Span>) {
+        self.spans.push(span);
+    }
+
+    pub fn add_meta(&mut self, meta: Option<String>) {
+        self.meta.push(meta);
     }
 }
 
