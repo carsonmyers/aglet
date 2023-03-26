@@ -93,7 +93,6 @@ impl PrettyPrinter {
             })
             // spans are optional, so chain them with a neverending string of `None`
             // so that the main output isn't cut short if they're missing
-            .chain(iter::repeat(None))
             .collect::<Vec<_>>();
 
         // calculate the maximum width of the start and end spans to align the entire set
@@ -123,15 +122,16 @@ impl PrettyPrinter {
             .collect::<Vec<_>>();
         let max_main = main_lines.iter().map(|(_, len)| *len).max().unwrap_or(0);
 
-        // meta lines are optional, so chain them with a neverending string of `None`
-        // so it doesn't cut the output short if they're missing.
+        // span and meta lines are optional, so chain them with a neverending stream of `None`
+        // so they don't cut the output short if they're missing.
+        let span_lines = span_lines.into_iter().chain(iter::repeat(None));
         let meta_lines = self.meta.iter().chain(iter::repeat(&None));
 
-        Ok(span_lines
+        Ok(main_lines
             .into_iter()
-            .zip(main_lines)
+            .zip(span_lines)
             .zip(meta_lines)
-            .map(|((span, (main, main_len)), meta)| {
+            .map(|(((main, main_len), span), meta)| {
                 let span_column = if self.settings.include_spans {
                     // format each span line into aligned columns. Terminal colors are added after
                     // formatting, so the `{:<max_start$}` formatters are fine here (plus each
