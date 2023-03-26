@@ -6,7 +6,4 @@ pub type Result = std::result::Result<(), Error>;
 pub enum Error {
     #[error("format error: {0}")]
     FormatError(#[from] fmt::Error),
-
-    #[error("children have already been written")]
-    ChildrenAlreadyWritten,
 }

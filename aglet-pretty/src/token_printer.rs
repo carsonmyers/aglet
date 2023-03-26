@@ -13,12 +13,28 @@ const PARAMETER_COLOR: Color = Color::TrueColor {
     b: 150,
 };
 
+///Printer for a tokenizer token
+///
+/// Tokens can optionally be printed with properties. They are printed all on one
+/// line, with no nesting components.
+///
+/// # Example
+///
+/// A literal token might be printed like this:
+///
+/// ```ignore
+/// [Literal value='a']
+/// ```
 pub struct TokenPrinter<'a, 'b: 'a> {
     writer: &'a mut Writer<'b>,
     result: Result,
 }
 
 impl<'a, 'b: 'a> TokenPrinter<'a, 'b> {
+    /// Begin printing the token = its name will be printed, and its span will be added
+    /// to the output at this stage. If the caller is printing the tokenizer's state stack
+    /// along with the token, it can be passed here as well and it will be printed
+    /// in the metadata column.
     pub fn new(
         writer: &'a mut Writer<'b>,
         name: &str,
@@ -43,6 +59,9 @@ impl<'a, 'b: 'a> TokenPrinter<'a, 'b> {
         TokenPrinter { writer, result }
     }
 
+    /// Add a property to the token.
+    ///
+    /// Properties can be optionally prefixed with a name
     pub fn property(
         &mut self,
         name: Option<&str>,
@@ -74,6 +93,10 @@ impl<'a, 'b: 'a> TokenPrinter<'a, 'b> {
         self
     }
 
+    /// Maybe add a property to the token.
+    ///
+    /// The property will be added if `value` is not `None`. It can be optionally
+    /// prefixed with a property name.
     pub fn maybe_property(
         &mut self,
         name: Option<&str>,
@@ -87,6 +110,11 @@ impl<'a, 'b: 'a> TokenPrinter<'a, 'b> {
         }
     }
 
+    /// Finish printing the token
+    ///
+    /// Writes the closing `]` of the token and and returns the result of printing all of
+    /// its parts. If errors occurred, only the first will be returned (and no printing will
+    /// have taken place since it occurred).
     pub fn finish(&mut self) -> Result {
         self.result.and_then(|_| {
             write!(self.writer, "]\n")?;

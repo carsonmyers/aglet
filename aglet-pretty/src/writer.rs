@@ -9,6 +9,10 @@ use crate::Pretty;
 use crate::Result;
 use crate::TokenPrinter;
 
+/// Writer for pretty-printing parser structures
+///
+/// The writer keeps track of the indentation of nested structures, as well as
+/// spans and metadata that should be reported along with the main output.
 pub struct Writer<'a> {
     buf:                  &'a mut (dyn Write + 'a),
     spans:                &'a mut Vec<Option<Span>>,
@@ -39,11 +43,16 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// Set the indentation style
+    ///
+    /// The provided string will be repeated by the number of indents
+    /// for any indented lines in the output
     pub fn with_indent(mut self, indent: &str) -> Self {
         self.indent = indent.to_string();
         self
     }
 
+    /// Print the indentation for the current level
     pub fn print_indent(&mut self) -> fmt::Result {
         for _ in 0..self.level {
             self.buf.write_str(self.indent.as_str())?;
@@ -52,6 +61,14 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    /// Create an [`AstPrinter`](crate::AstPrinter) for printing a nested
+    /// abstract syntax tree structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - the display name of the AST node
+    /// * `span` - the text span of the node's origin in the input
+    /// * `color` - the color to print the node's name in
     pub fn print_ast<'b>(
         &'b mut self,
         name: &str,
@@ -61,6 +78,14 @@ impl<'a> Writer<'a> {
         AstPrinter::new(self, name, span, color)
     }
 
+    /// Create a [`TokenPrinter`](crate::TokenPrinter) for printing a token stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - the display name of the token
+    /// * `span` - the text span of the token's origin in the input
+    /// * `stack` - the state stack information when the token was produced
+    /// * `color` - the color to print the token's name in
     pub fn print_token<'b>(
         &'b mut self,
         name: &str,
@@ -71,14 +96,17 @@ impl<'a> Writer<'a> {
         TokenPrinter::new(self, name, span, stack, color)
     }
 
+    /// Pretty-print a structure
     pub fn print(&mut self, item: &impl Pretty) -> Result {
         item.print(self)
     }
 
+    /// Add a span to the output
     pub fn add_span(&mut self, span: Option<Span>) {
         self.spans.push(span);
     }
 
+    /// Add a line of metadata to the output
     pub fn add_meta(&mut self, meta: Option<String>) {
         self.meta.push(meta);
     }

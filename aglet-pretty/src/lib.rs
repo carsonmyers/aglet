@@ -20,6 +20,16 @@ const EXTRA_COLOR: Color = Color::TrueColor {
     b: 150,
 };
 
+/// Pretty printer for parser data
+///
+/// The debug trait doesn't allow for pretty-printing outside of its struct,
+/// tuple, etc. printers. To print an AST without a lot of extraneous closing
+/// braces on their own lines, this separate pretty-printer provides the auto
+/// indentation for custom printers.
+///
+/// Printers can also supply text spans for each printed line, which will be
+/// displayed to the left of the main structure, as well as metadata which will
+/// be displayed to the right.
 pub struct PrettyPrinter {
     settings: PrettyPrintSettings,
     main:     String,
@@ -39,6 +49,13 @@ impl PrettyPrinter {
         }
     }
 
+    /// Print a pretty-printable structure
+    ///
+    /// The output string is kept internally until [`finish`](PrettyPrinter::finish) is
+    /// called, because while a nested structure like an AST only requires one call to
+    /// `print`, a list of structures like `tokens` requires many prints. Storing the
+    /// output as internal state across `print` invocations allows the printer to maintain
+    /// column widths until the entire dataset has been processed.
     pub fn print(&mut self, item: &impl Pretty) -> result::Result<&Self, Error> {
         let mut writer = Writer::new(&mut self.main, &mut self.spans, &mut self.meta)
             .with_indent(&self.settings.indent);
@@ -57,6 +74,7 @@ impl PrettyPrinter {
         Ok(self)
     }
 
+    /// Finish printing a dataset and return the formatted results
     pub fn finish(&self) -> result::Result<String, Error> {
         let use_color = match self.settings.color_when {
             ColorWhen::Always => true,
@@ -64,14 +82,22 @@ impl PrettyPrinter {
             ColorWhen::Never => false,
         };
 
+        // each span is transformed into a tuple of two formatted positions in order to
+        // align them in the output (`start` aligned to the left, `end` to the right,
+        // with the dash separating them in the center)
         let span_lines = self
             .spans
             .iter()
             .map(|maybe_span| {
                 maybe_span.map(|span| (format!("{:?}", span.start), format!("{:?}", span.end)))
             })
+            // spans are optional, so chain them with a neverending string of `None`
+            // so that the main output isn't cut short if they're missing
+            .chain(iter::repeat(None))
             .collect::<Vec<_>>();
 
+        // calculate the maximum width of the start and end spans to align the entire set
+        // to the same width
         let (max_start, max_end) = if self.settings.align {
             span_lines
                 .iter()
@@ -83,9 +109,13 @@ impl PrettyPrinter {
                     (usize::max(left, acc_left), usize::max(right, acc_right))
                 })
         } else {
+            // if the align setting is turned off, using 0 as a width has the same effect as
+            // not using alignment formatting at all
             (0, 0)
         };
 
+        // colored strings interfere with alignment, so the clean length (without any terminal
+        // color/style markers) of each line of the main column is added as context
         let main_lines = self
             .main
             .lines()
@@ -93,6 +123,8 @@ impl PrettyPrinter {
             .collect::<Vec<_>>();
         let max_main = main_lines.iter().map(|(_, len)| *len).max().unwrap_or(0);
 
+        // meta lines are optional, so chain them with a neverending string of `None`
+        // so it doesn't cut the output short if they're missing.
         let meta_lines = self.meta.iter().chain(iter::repeat(&None));
 
         Ok(span_lines
@@ -101,9 +133,13 @@ impl PrettyPrinter {
             .zip(meta_lines)
             .map(|((span, (main, main_len)), meta)| {
                 let span_column = if self.settings.include_spans {
+                    // format each span line into aligned columns. Terminal colors are added after
+                    // formatting, so the `{:<max_start$}` formatters are fine here (plus each
+                    // line is colored in the same way so they shouldn't interfere regardless)
                     span.map(|(span_left, span_right)| {
                         format!("{:<max_start$} - {:>max_end$}:\t", span_left, span_right)
                     })
+                    // colorize the span column if applicable
                     .map(|span| {
                         if use_color {
                             span.color(EXTRA_COLOR).to_string()
@@ -111,8 +147,11 @@ impl PrettyPrinter {
                             span
                         }
                     })
+                    // account for lines with no span information
                     .unwrap_or_else(|| {
                         if self.settings.align {
+                            // if alignment is being used, output enough spaces to maintain
+                            // the column width (the max start and end width, plus 3 for " - ")
                             format!("{}:\t", " ".repeat(max_start + max_end + 3))
                         } else {
                             String::new()
@@ -123,6 +162,9 @@ impl PrettyPrinter {
                 };
 
                 let main_column = if self.settings.include_meta {
+                    // Using `{:<max_main$}` doesn't account for the invisible formatting
+                    // characters, so the right number of spaces for alignment need to be
+                    // manually output for the main column data
                     format!("{}{}", main, " ".repeat(max_main - main_len))
                 } else {
                     main.to_string()
@@ -130,12 +172,11 @@ impl PrettyPrinter {
 
                 let meta_column = if self.settings.include_meta {
                     meta.as_ref()
-                        .map(|meta| format!("{}", meta))
                         .map(|meta| {
                             if use_color {
                                 meta.color(EXTRA_COLOR).to_string()
                             } else {
-                                meta
+                                meta.to_string()
                             }
                         })
                         .unwrap_or_else(|| String::new())
@@ -143,6 +184,7 @@ impl PrettyPrinter {
                     String::new()
                 };
 
+                // final output of all three columns. Some may be empty
                 format!("{}{}{}", span_column, main_column, meta_column)
             })
             .collect::<Vec<_>>()
@@ -150,19 +192,26 @@ impl PrettyPrinter {
     }
 }
 
+/// Clean length of a string potentially containing terminal color markers
 fn len_clean(string: &str) -> usize {
     enum State {
-        Copy,
+        Count,
         Match,
         Filter,
     }
 
     let mut result = 0;
-    let mut state = State::Copy;
+    let mut state = State::Count;
 
+    // count each character not part of the terminal formatting syntax.
+    // terminal formatting is done with the sequence `\x1b[`, a series of
+    // color/style options expressed as bytes, and `m`.
     for c in string.chars() {
         match state {
-            State::Copy => {
+            // count each character until the beginning of a format sequence `\x1b` is
+            // encountered, and then switch to the match state to confirm the beginning
+            // of a sequence by finding `[`
+            State::Count => {
                 if c == '\x1b' {
                     state = State::Match;
                     continue;
@@ -170,17 +219,24 @@ fn len_clean(string: &str) -> usize {
 
                 result += 1;
             },
+            // the beginning of a format sequence `\x1b` has been found, but unless it
+            // is immediately followed by `[` a format sequence has not been found; so
+            // either match it here or allow `\x1b` to be counted. If a sequence has been
+            // found, switch to the filter state to ignore all characters in the sequence.
             State::Match => {
                 if c == '[' {
                     state = State::Filter;
                     continue;
                 }
 
+                // count `\x1b` and whatever was found after it
                 result += 2;
             },
+            // ignore all bytes in a format sequence until the terminating byte `m`
+            // has been found
             State::Filter => {
                 if c == 'm' {
-                    state = State::Copy;
+                    state = State::Count;
                 }
             },
         }
@@ -199,26 +255,32 @@ pub struct PrettyPrintSettings {
 }
 
 impl PrettyPrintSettings {
+    /// Control whether the pretty printer should align its output columns
+    /// with extra spaces to ensure they line up visually.
     pub fn align(mut self, value: bool) -> Self {
         self.align = value;
         self
     }
 
+    /// Control whether spans are printed in a column to the left of the main output
     pub fn include_spans(mut self, value: bool) -> Self {
         self.include_spans = value;
         self
     }
 
+    /// Control whether optional metadata is printed in a column to the right of the main output
     pub fn include_meta(mut self, value: bool) -> Self {
         self.include_meta = value;
         self
     }
 
+    /// Control whether output is printed in color
     pub fn color_when(mut self, value: ColorWhen) -> Self {
         self.color_when = value;
         self
     }
 
+    /// Control how nested structures are indented in the output.
     pub fn indent(mut self, value: &str) -> Self {
         self.indent = value.to_string();
         self
@@ -237,13 +299,22 @@ impl Default for PrettyPrintSettings {
     }
 }
 
+/// When to print output in color
 #[derive(Debug, Clone, Copy)]
 pub enum ColorWhen {
+    /// Force output coloring
     Always,
+
+    /// Use colored output when the terminal supports it, and/or delegate the decision to
+    /// the `CLICOLOR_FORCE`, `NO_COLOR`, and `CLICOLOR` environment variables
     Auto,
+
+    // Turn off output colorin
     Never,
 }
 
+/// Support pretty-printing
 pub trait Pretty {
+    /// Pretty-print a value to a [`Writer`](crate::Writer)
     fn print(&self, w: &mut Writer<'_>) -> Result;
 }

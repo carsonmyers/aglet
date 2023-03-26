@@ -8,13 +8,38 @@ use crate::Result;
 use crate::Writer;
 
 const DEFAULT_COLOR: Color = Color::White;
+const PARAMETER_COLOR: Color = Color::TrueColor {
+    r: 150,
+    g: 150,
+    b: 150,
+};
 
+/// Print an abstract syntax tree
+///
+/// Tree nodes can be printed with properties and children, with children being
+/// printed indented as another node.
+///
+/// # Example
+///
+/// An alternation node with two literal children might be printed like this:
+///
+/// ```ignore
+/// (Alternation
+///     (Literal value='a')
+///     (Literal value='b'))
+/// ```
 pub struct AstPrinter<'a, 'b: 'a> {
     writer: &'a mut Writer<'b>,
     result: Result,
 }
 
 impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
+    /// Begin printing an AST node - its name will be printed, and its span will be added
+    /// to the output at this stage.
+    ///
+    /// To keep spans aligned with their nodes, all children should either also be printed
+    /// with this printer, or the caller that adds the children needs to supply a span
+    /// (or `None`) for each child printed which isn't a node.
     pub fn new(
         writer: &'a mut Writer<'b>,
         name: &str,
@@ -37,6 +62,10 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         AstPrinter { writer, result }
     }
 
+    /// Add a property to the node.
+    ///
+    /// Properties are printed on the same line as the node, and can optionally be
+    /// prefixed with a name.
     pub fn property(
         &mut self,
         name: Option<&str>,
@@ -55,7 +84,7 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
                 write!(
                     self.writer,
                     " {}{}",
-                    name_text.truecolor(150, 150, 150).italic(),
+                    name_text.color(PARAMETER_COLOR).italic(),
                     format!("{:?}", value).color(color)
                 )?;
             } else {
@@ -68,6 +97,10 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         self
     }
 
+    /// Maybe add a property to the node.
+    ///
+    /// The property will be added if `value` is not `None`. The property is printed
+    /// on the same line as the node and can be optionally prefixed with a name.
     pub fn maybe_property(
         &mut self,
         name: Option<&str>,
@@ -81,6 +114,11 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         }
     }
 
+    /// Add a child to the node.
+    ///
+    /// The child will be recursively pretty printed at a higher level of indentation.
+    /// Children are printed on a new line and so should add a value to `w.spans`
+    /// and to `w.meta` if applicable.
     pub fn child(&mut self, name: Option<&str>, item: &impl Pretty) -> &mut Self {
         self.result = self.result.and_then(|_| {
             write!(self.writer, "\n")?;
@@ -99,6 +137,14 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         self
     }
 
+    /// Add multiple children to the node
+    ///
+    /// Children will be recursively printed at a higher level of indentation.
+    /// Children are printed on a new line and so should use [`Writer.add_span()`][1]
+    /// and [`Writer.add_meta()`][2] if appliccable
+    ///
+    /// [1]: crate::writer::Writer::add_span
+    /// [2]: crate::writer::Writer::add_meta
     pub fn children(&mut self, items: &Vec<impl Pretty>) -> &mut Self {
         for item in items {
             self.child(None, item);
@@ -107,6 +153,11 @@ impl<'a, 'b: 'a> AstPrinter<'a, 'b> {
         self
     }
 
+    /// Finish the AST node.
+    ///
+    /// Writes the closing `)` of the node and returns the result of printing all of its
+    /// parts. If errors occurred, only the first will be returned (an no printing will have
+    /// taken place since it occurred).
     pub fn finish(&mut self) -> Result {
         self.result.and_then(|_| {
             write!(self.writer, ")")?;
