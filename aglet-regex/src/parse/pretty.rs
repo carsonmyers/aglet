@@ -58,7 +58,7 @@ impl Pretty for ExprKind {
             Self::Alternation(alt) => w.print(alt),
             Self::Concatenation(concat) => w.print(concat),
             Self::Repetition(rep) => w.print(rep),
-            Self::Any => w.print_ast(".", None, None).finish(),
+            Self::Any => w.print_ast("Any", None, None).finish(),
             Self::Literal(c) => w
                 .print_ast("Literal", None, COLOR_MATCH_ONE)
                 .property(None, c, None)

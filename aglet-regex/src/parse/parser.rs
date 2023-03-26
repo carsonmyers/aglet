@@ -4,7 +4,15 @@ use aglet_text::Span;
 
 use crate::parse::ast::*;
 use crate::parse::error::*;
-use crate::parse::input::{expect_tok, match_one, match_tok, matches_one, matches_tok, Input};
+use crate::parse::input::{
+    expect_tok,
+    illegal_next_tok,
+    match_one,
+    match_tok,
+    matches_one,
+    matches_tok,
+    Input,
+};
 use crate::tokenize::{self, Token, TokenKind};
 
 /// Parse regular expressions from a [token stream](tokenize::Tokenizer)
@@ -380,6 +388,13 @@ impl<'a> Parser<'a> {
     ///     | class
     /// ```
     pub fn parse_item(&mut self) -> Result<Option<Expr>> {
+        illegal_next_tok!(self.input, "`.`, `[`, `(`, boundary, class, or literal"; [
+            TokenKind::Star,
+            TokenKind::Plus,
+            TokenKind::Question,
+            TokenKind::OpenBrace,
+        ]);
+
         let res = parse_alts![
             { self.parse_dot() }
             { self.parse_literal() }
@@ -1010,9 +1025,6 @@ impl<'a> Parser<'a> {
     ///
     /// See [parse_specified_class][1] for details on class items
     ///
-    /// Legal prefix tokens for this production are [`Literal`][2], [`Digit`][3],
-    /// [`Whitespace`][4], [`WordChar`][5], [`OpenBracket`][6], and [`CloseBracket`][7].
-    ///
     /// # Grammar
     ///
     /// ```grammar
@@ -1030,12 +1042,6 @@ impl<'a> Parser<'a> {
     /// ```
     ///
     /// [1]: crate::parse::Parser::parse_specified_class
-    /// [2]: crate::tokenize::TokenKind::Literal
-    /// [3]: crate::tokenize::TokenKind::Digit
-    /// [4]: crate::tokenize::TokenKind::Whitespace
-    /// [5]: crate::tokenize::TokenKind::WordChar
-    /// [6]: crate::tokenize::TokenKind::OpenBracket
-    /// [7]: crate::tokenize::TokenKind::CloseBracket
     pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
         let res = parse_alts![
             { self.parse_class_term_literal() }

@@ -88,6 +88,22 @@ macro_rules! expect_tok {
 }
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
+macro_rules! illegal_next_tok {
+    ($input:expr, $expect:literal; [$($tok:pat),+ $(,)*]) => {
+        match $input.peek() {
+            $(| Some(Ok(Token { kind: $tok, .. })))+ => {
+                let illegal_tok = $input.next().unwrap().unwrap();
+                Err($input.error(ErrorKind::UnexpectedToken(
+                    illegal_tok.kind,
+                    $expect.to_string()
+                )))
+            },
+            _ => Ok(()),
+        }?;
+    }
+}
+
+#[cfg_attr(rustfmt, rustfmt_skip)]
 macro_rules! match_tok {
     ($input:expr; $span:pat, $kind:pat) => {
         let Some(res) = $input.peek() else {
@@ -255,6 +271,7 @@ macro_rules! matches_one {
 }
 
 pub(crate) use expect_tok;
+pub(crate) use illegal_next_tok;
 pub(crate) use match_one;
 pub(crate) use match_tok;
 pub(crate) use matches_one;
