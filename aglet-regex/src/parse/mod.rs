@@ -16,7 +16,7 @@ use crate::tokenize::{self, Token, TokenKind};
 pub(crate) fn token_iter(tokens: Vec<TokenKind>) -> impl Iterator<Item = tokenize::Result<Token>> {
     tokens.into_iter().map(|kind| {
         Ok(Token {
-            span: Span::new(),
+            span: Span::new(0, 0),
             kind,
         })
     })
@@ -36,7 +36,7 @@ pub(crate) fn span_token_iter(
         })
         .map(|(span_start, span_len, kind)| {
             let tok = Token {
-                span: Span::from_offsets(span_start, span_start + span_len),
+                span: Span::new(span_start, span_start + span_len),
                 kind,
             };
 

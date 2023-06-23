@@ -2,6 +2,8 @@ use std::convert::From;
 use std::fmt;
 use std::result;
 
+use aglet_derive::*;
+use aglet_pretty::SpanPrinter;
 use aglet_text::Span;
 use thiserror::Error;
 

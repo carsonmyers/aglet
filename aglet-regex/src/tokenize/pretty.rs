@@ -8,6 +8,7 @@ const COLOR_BOUNDARY: Option<Color> = Some(Color::BrightRed);
 const COLOR_REPETITION: Option<Color> = Some(Color::Cyan);
 const COLOR_MATCH_ONE: Option<Color> = Some(Color::Green);
 const COLOR_CLASS_ITEM: Option<Color> = Some(Color::BrightYellow);
+const COLOR_ERROR: Option<Color> = Some(Color::Red);
 
 impl Pretty for TokenStack {
     fn print(&self, w: &mut Writer<'_>) -> Result {
@@ -228,6 +229,10 @@ impl Token {
                     if *negated { Some(&true) } else { None },
                     None,
                 )
+                .finish(),
+            TokenKind::Error(err) => w
+                .print_token("Error", Some(self.span), stack, COLOR_ERROR)
+                .property(None, err, None)
                 .finish(),
         }
     }

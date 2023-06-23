@@ -138,7 +138,7 @@ impl<'a> Parser<'a> {
                 // If there is nothing in the alternate (e.g., `/abc|/`) then an empty
                 // expression is allowed
                 None => Expr {
-                    span: Span::from(self.input.position(), self.input.position()),
+                    span: Span::new(self.input.position(), self.input.position()),
                     kind: ExprKind::Empty,
                 },
             };
@@ -158,7 +158,7 @@ impl<'a> Parser<'a> {
         if items.len() > 1 {
             // The alternation expression type only makes sense if there is more than one
             // alternate
-            let span = Span::wrap(items[0].span, items[items.len() - 1].span);
+            let span = Span::wrap(&items[0].span, &items[items.len() - 1].span);
             let kind = ExprKind::Alternation(Alternation { span, items });
 
             Ok(Expr { span, kind })
@@ -193,7 +193,7 @@ impl<'a> Parser<'a> {
         // A concatenation only makes sense so long as there's more than one element
         // to concatenate, otherwise the sub-expression type should pass through
         if items.len() > 1 {
-            let span = Span::wrap(items[0].span, items[items.len() - 1].span);
+            let span = Span::wrap(&items[0].span, &items[items.len() - 1].span);
             Ok(Some(Expr {
                 span,
                 kind: ExprKind::Concatenation(Concatenation { span, items }),
@@ -243,7 +243,7 @@ impl<'a> Parser<'a> {
         // so matching a repetition specifier is optional. When not present, the sub-item
         // will pass through instead of a repetition expr
         if let Some(kind) = self.parse_repetition_spec()? {
-            let span = Span::from(item.span.start, self.input.position());
+            let span = Span::new(item.span.start, self.input.position());
             let repetition = Repetition {
                 span,
                 kind,
@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
 
         expect_tok!(self.input, "end of range `}`"; span_end, TokenKind::CloseBrace);
 
-        let span = Span::wrap(span_start, span_end);
+        let span = Span::wrap(&span_start, &span_end);
         Ok(Some(RepetitionKind::Range(Range { span, start, end })))
     }
 
@@ -513,7 +513,7 @@ impl<'a> Parser<'a> {
 
         expect_tok!(self.input, "end of group `)`"; span_end, TokenKind::CloseGroup);
 
-        let span = Span::wrap(span_start, span_end);
+        let span = Span::wrap(&span_start, &span_end);
 
         Ok(Some(Expr {
             span,
@@ -603,7 +603,7 @@ impl<'a> Parser<'a> {
         let clear_flags = self.parse_flags(clear_flags)?;
 
         Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
-            span:  Span::wrap(span, expr.span),
+            span:  Span::wrap(&span, &expr.span),
             flags: Some(Flags {
                 span,
                 set_flags,
@@ -627,7 +627,7 @@ impl<'a> Parser<'a> {
         let name = StringSpan { span, value: name };
 
         Ok(Some(GroupKind::Named(NamedGroup {
-            span: Span::wrap(span, expr.span),
+            span: Span::wrap(&span, &expr.span),
             name,
             expr: Box::new(expr),
         })))
@@ -883,7 +883,7 @@ impl<'a> Parser<'a> {
 
         // construct the unicode class with the name and value collected from
         // UnicodePropValue and (optionally) UnicodePropName tokens
-        let span = Span::wrap(span_begin, span_end);
+        let span = Span::wrap(&span_begin, &span_end);
         let unicode_class = UnicodeClass {
             span,
             name,
@@ -956,7 +956,7 @@ impl<'a> Parser<'a> {
 
         expect_tok!(self.input, "end of character class `]`"; span_end, TokenKind::CloseBracket);
 
-        let span = Span::wrap(span_start, span_end);
+        let span = Span::wrap(&span_start, &span_end);
         let inner_span_start = items
             .first()
             .map(|item| item.span.start)
@@ -965,7 +965,7 @@ impl<'a> Parser<'a> {
             .last()
             .map(|item| item.span.end)
             .unwrap_or(span_end.start);
-        let inner_span = Span::from(inner_span_start, inner_span_end);
+        let inner_span = Span::new(inner_span_start, inner_span_end);
 
         let kind = ClassKind::Specified(SpecifiedClass {
             span:  inner_span,
@@ -1075,7 +1075,7 @@ impl<'a> Parser<'a> {
             expect_tok!(self.input, "end of range"; span_end, TokenKind::Literal(c_end));
 
             // if a range is matched, a range class specifier will be returned
-            let span = Span::wrap(span_start, span_end);
+            let span = Span::wrap(&span_start, &span_end);
             let kind = ClassSpecKind::Range(c_start, c_end);
             spec = Some(ClassSpec {
                 span,
@@ -1164,7 +1164,7 @@ impl<'a> Parser<'a> {
             }?;
 
             // create the class specifier for a posix class
-            let kind_span = Span::wrap(span_start, span_end);
+            let kind_span = Span::wrap(&span_start, &span_end);
             span = Some(kind_span);
             kind = Some(ClassSpecKind::Posix(PosixClass { span: kind_span, kind: posix_kind }));
 
@@ -1191,8 +1191,8 @@ impl<'a> Parser<'a> {
                 .last()
                 .map(|item| item.span.end)
                 .unwrap_or(span_end.start);
-            let inner_span = Span::from(inner_span_start, inner_span_end);
-            let kind_span = Span::wrap(span_start, span_end);
+            let inner_span = Span::new(inner_span_start, inner_span_end);
+            let kind_span = Span::wrap(&span_start, &span_end);
             let class_kind = ClassKind::Specified(SpecifiedClass {
                 span:  inner_span,
                 items: items,
@@ -1276,7 +1276,7 @@ impl<'a> Parser<'a> {
         };
 
         // construct a `ClassSpecKind` depending on which operator was found
-        let span = Span::wrap(start.span, end.span);
+        let span = Span::wrap(&start.span, &end.span);
         let kind = match set_kind {
             TokenKind::Symmetrical => ClassSpecKind::Symmetrical(Symmetrical {
                 span,
@@ -2078,42 +2078,26 @@ mod tests {
 
         let class = get_class(p.parse_specified_class());
         assert_eq!(class.negated, false);
-        assert_eq!(class.span.start.column, 1);
-        assert_eq!(class.span.start.offset, 0);
-        assert_eq!(class.span.end.column, 6);
-        assert_eq!(class.span.end.offset, 5);
+        assert_eq!(class.span.start, 0);
+        assert_eq!(class.span.end, 5);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
         if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
-            assert_eq!(items[0].span.start.column, 2);
-            assert_eq!(items[0].span.end.column, 3);
             assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
-            assert_eq!(items[1].span.start.column, 3);
-            assert_eq!(items[1].span.end.column, 4);
             assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
-            assert_eq!(items[2].span.start.column, 4);
-            assert_eq!(items[2].span.end.column, 5);
         }
 
         let class = get_class(p.parse_specified_class());
         assert_eq!(class.negated, true);
-        assert_eq!(class.span.start.column, 6);
-        assert_eq!(class.span.start.offset, 5);
-        assert_eq!(class.span.end.column, 12);
-        assert_eq!(class.span.end.offset, 11);
+        assert_eq!(class.span.start, 5);
+        assert_eq!(class.span.end, 11);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
         if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
             assert_eq!(items.len(), 3);
             assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
-            assert_eq!(items[0].span.start.column, 8);
-            assert_eq!(items[0].span.end.column, 9);
             assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
-            assert_eq!(items[1].span.start.column, 9);
-            assert_eq!(items[1].span.end.column, 10);
             assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
-            assert_eq!(items[2].span.start.column, 10);
-            assert_eq!(items[2].span.end.column, 11);
         }
     }
 
@@ -2264,7 +2248,7 @@ mod tests {
     #[test]
     fn class_item_set() {
         let lhs = ClassSpec {
-            span: Span::from_offsets(2, 3),
+            span: Span::new(2, 3),
             kind: ClassSpecKind::Literal('c'),
         };
 

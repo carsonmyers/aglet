@@ -1,0 +1,13 @@
+(?x)
+	^
+	(?P<property_name>[a-zA-Z_][a-zA-Z0-9_]{0, 29}) # property name: max 30 alphanumeric characters
+	\s*=\s* # equal sign
+	(?P<property_value>
+		\d+(?:\.\d+)? # digit value
+		| "[^"]*" # string value
+	)
+	$
+
+^([a-zA-Z0-9._-]+)@([a-zA-Z0-9._-]+)\.(com|net|org)$
+
+(?i:0x[[:alnum:]--G-Z--g-z]+)

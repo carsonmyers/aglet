@@ -1,5 +1,6 @@
 mod ast_printer;
 mod error;
+mod span_printer;
 mod token_printer;
 mod writer;
 
@@ -11,6 +12,7 @@ use ast_printer::AstPrinter;
 use colored::control::ShouldColorize;
 use colored::{Color, Colorize};
 pub use error::*;
+pub use span_printer::SpanPrinter;
 use token_printer::TokenPrinter;
 pub use writer::Writer;
 
@@ -89,7 +91,9 @@ impl PrettyPrinter {
             .spans
             .iter()
             .map(|maybe_span| {
-                maybe_span.map(|span| (format!("{:?}", span.start), format!("{:?}", span.end)))
+                maybe_span
+                    .as_ref()
+                    .map(|span| (format!("{:?}", span.start), format!("{:?}", span.end)))
             })
             // spans are optional, so chain them with a neverending string of `None`
             // so that the main output isn't cut short if they're missing

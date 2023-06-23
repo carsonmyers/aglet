@@ -1,22 +1,14 @@
 use std::fmt;
 
-use aglet_text::Span;
+use aglet_text::{Cursor, Span};
 
+use crate::tokenize::error::Error;
 use crate::tokenize::state::StateStack;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,
-}
-
-impl Token {
-    pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
-        Token {
-            kind,
-            span: Span::from_offsets(start, end),
-        }
-    }
 }
 
 impl fmt::Debug for Token {
@@ -225,6 +217,13 @@ pub enum TokenKind {
     /// * `0` - class name
     /// * `1` - whether the class is negated
     ClassName(String, bool),
+
+    /// Error generated during tokenization
+    ///
+    /// # Items
+    ///
+    /// * `0` - error that was generated
+    Error(Error),
 }
 
 impl TokenKind {

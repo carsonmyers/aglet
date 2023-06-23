@@ -1,0 +1,12 @@
+[package]
+name = "aglet-derive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+aglet-pretty = { path = "../aglet-pretty" }
+syn = "1.0"
+quote = "1.0"

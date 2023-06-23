@@ -1,7 +1,8 @@
 use std::iter;
 
+use aglet_text::Cursor;
+
 use crate::tokenize::error::*;
-use crate::tokenize::input::*;
 use crate::tokenize::state::*;
 use crate::tokenize::token::*;
 #[cfg(test)]
@@ -9,9 +10,10 @@ use crate::tokenize::{assert_next_err, assert_next_none, assert_next_tok};
 
 /// Tokenizer for a regular expression
 pub struct Tokenizer<'a> {
-    input:           Input<'a>,
+    cursor:          Cursor<'a>,
     state:           StateStack,
     last_token_kind: Option<TokenKind>,
+    is_eof:          bool,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -29,11 +31,12 @@ impl<'a> Tokenizer<'a> {
     /// let _ = tokenize::Tokenizer::new("[a-z-]{1, 4}");
     /// let _ = tokenize::Tokenizer::new("^hello, world$");
     /// ```
-    pub fn new<T: Into<&'a str>>(input: T) -> Self {
+    pub fn new<C: Into<Cursor<'a>>>(cursor: C) -> Self {
         Tokenizer {
-            input:           Input::new(input),
+            cursor:          cursor.into(),
             state:           StateStack::new(),
             last_token_kind: None,
+            is_eof:          false,
         }
     }
 
@@ -60,18 +63,27 @@ impl<'a> Tokenizer<'a> {
     /// );
     /// ```
     pub fn next_token(&mut self) -> Result<Token> {
-        let token = match self.state.get() {
-            Ok(State::Main) => self.next_token_main(),
-            Ok(State::Group) => self.next_token_group(),
-            Ok(State::Class) => self.next_token_class(),
-            Ok(State::ClassName) => self.next_token_class_name(),
-            Ok(State::Range) => self.next_token_range(),
-            Ok(State::UnicodeProperties) => self.next_token_unicode_properties(),
-            Err(err) => Err(self.input.error(err.into())),
-        };
+        // short-circuit the token matching code if the tokenizer has already been marked EOF
+        if self.is_eof {
+            return self.err(ErrorKind::EndOfFile);
+        }
 
-        self.last_token_kind = token.as_ref().ok().map(|t| t.kind.clone());
-        token
+        match self.next_token_inner() {
+            // non-recoverable errors should mark the tokenizer as EOF
+            e @ Err(Error {
+                kind:
+                    ErrorKind::EndOfFile
+                    | ErrorKind::UnexpectedEOF(_)
+                    | ErrorKind::InternalStateError(_)
+                    | ErrorKind::EmptyStateStack
+                    | ErrorKind::NotImplemented,
+                ..
+            }) => {
+                self.is_eof = true;
+                e
+            },
+            res => res,
+        }
     }
 
     /// Get the next token from the input, along with the current state stack.
@@ -85,6 +97,22 @@ impl<'a> Tokenizer<'a> {
     /// Create an iterator over
     pub fn into_token_stack_iter(self) -> TokenStackIterator<'a> {
         TokenStackIterator { tokenizer: self }
+    }
+
+    /// Get the next token from the input
+    fn next_token_inner(&mut self) -> Result<Token> {
+        let token = match self.state.get() {
+            Ok(State::Main) => self.next_token_main(),
+            Ok(State::Group) => self.next_token_group(),
+            Ok(State::Class) => self.next_token_class(),
+            Ok(State::ClassName) => self.next_token_class_name(),
+            Ok(State::Range) => self.next_token_range(),
+            Ok(State::UnicodeProperties) => self.next_token_unicode_properties(),
+            Err(err) => self.err(err.into()),
+        };
+
+        self.last_token_kind = token.as_ref().ok().map(|t| t.kind.clone());
+        token
     }
 
     /// Get a token in the `Main` state
@@ -103,57 +131,57 @@ impl<'a> Tokenizer<'a> {
             self.skip_whitespace();
         }
 
-        match self.input.next() {
-            Some('^') => Ok(self.input.token(TokenKind::StartOfLine)),
-            Some('$') => Ok(self.input.token(TokenKind::EndOfLine)),
-            Some('.') => Ok(self.input.token(TokenKind::Dot)),
-            Some('?') => Ok(self.input.token(TokenKind::Question)),
-            Some('*') => Ok(self.input.token(TokenKind::Star)),
-            Some('+') => Ok(self.input.token(TokenKind::Plus)),
-            Some('|') => Ok(self.input.token(TokenKind::Alternate)),
+        match self.cursor.next() {
+            Some('^') => self.tok_kind(TokenKind::StartOfLine),
+            Some('$') => self.tok_kind(TokenKind::EndOfLine),
+            Some('.') => self.tok_kind(TokenKind::Dot),
+            Some('?') => self.tok_kind(TokenKind::Question),
+            Some('*') => self.tok_kind(TokenKind::Star),
+            Some('+') => self.tok_kind(TokenKind::Plus),
+            Some('|') => self.tok_kind(TokenKind::Alternate),
 
             // The `(` token enters the group parsing state, e.g. `(?:abc)`
             // This state is swapped with another `Main` state after the header
             // is matched - a group name, flags, non-capturing token, etc.
             Some('(') => {
                 self.state.push(State::Group);
-                Ok(self.input.token(TokenKind::OpenGroup))
+                self.tok_kind(TokenKind::OpenGroup)
             },
 
             // The group state swaps to the main state as soon as its header
             // has been parsed; so this state is responsible for matching the
             // `)` token and popping the state
             Some(')') => match self.state.pop() {
-                Ok(_) => Ok(self.input.token(TokenKind::CloseGroup)),
-                Err(StateError::PoppedFinalState) => Ok(self.input.token(TokenKind::CloseGroup)),
-                Err(err @ _) => Err(self.input.error(err.into())),
+                Ok(_) => self.tok_kind(TokenKind::CloseGroup),
+                Err(StateError::PoppedFinalState) => self.tok_kind(TokenKind::CloseGroup),
+                Err(err @ _) => self.err(err.into()),
             },
 
             // The `[` token pushes the character class state, e.g. `[a-z]`
             Some('[') => {
                 self.state.push(State::Class);
-                Ok(self.input.token(TokenKind::OpenBracket))
+                self.tok_kind(TokenKind::OpenBracket)
             },
 
             // The main state is responsible for popping the class state
-            Some(']') => Ok(self.input.token(TokenKind::CloseBracket)),
+            Some(']') => self.tok_kind(TokenKind::CloseBracket),
 
             // The `{` token pushes the range state, e.g. `{1,3}`
             Some('{') => {
                 self.state.push(State::Range);
-                Ok(self.input.token(TokenKind::OpenBrace))
+                self.tok_kind(TokenKind::OpenBrace)
             },
 
             // The main state is responsible for popping the range state
-            Some('}') => Ok(self.input.token(TokenKind::CloseBrace)),
+            Some('}') => self.tok_kind(TokenKind::CloseBrace),
 
             // escape sequences can be a single character after a backslash,
             // or a more complicated unicode escapse e.g. `\x{01A1}`
             Some('\\') => self.parse_escape_sequence_main(),
 
             // All other input characters are literals
-            Some(c) => Ok(self.input.token(TokenKind::Literal(c))),
-            None => Err(self.input.error(ErrorKind::EndOfFile)),
+            Some(c) => self.tok_kind(TokenKind::Literal(c)),
+            None => self.err(ErrorKind::EndOfFile),
         }
     }
 
@@ -167,33 +195,34 @@ impl<'a> Tokenizer<'a> {
     /// another `Main` state, in case there is an expression inside the group
     /// that needs to be matched
     fn next_token_group(&mut self) -> Result<Token> {
-        match self.input.peek() {
+        match self.cursor.first() {
             // The group header always begins with a `?`
             Some('?') => {
-                // Consume the `?` to set up `peek` to read the next character
-                self.input.next();
-                match self.input.peek() {
+                match self.cursor.second() {
                     // `?:` marks a non-capturing group
                     Some(':') => {
-                        self.input.next();
-                        Ok(self.input.token(TokenKind::NonCapturing))
+                        self.cursor.skip(2);
+                        self.tok_kind(TokenKind::NonCapturing)
                     },
                     // `?P` is the beginning of a named group, e.g. `(?P<name>)`
                     Some('P') => {
-                        self.input.next();
+                        self.cursor.skip(2);
                         self.parse_named_group()
                     },
                     // anything else is setting flags, either for the scope
                     // above or for whatever follows in the group
-                    Some(_) => self.parse_flags(),
+                    Some(_) => {
+                        self.cursor.skip(1);
+                        self.parse_flags()
+                    },
                     None => {
                         self.state
                             .pop_all()
-                            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                            .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
 
-                        Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        self.err(ErrorKind::UnexpectedEOF(String::from(
                             "expected `:`, `P`, or group flags",
-                        ))))
+                        )))
                     },
                 }
             },
@@ -204,7 +233,8 @@ impl<'a> Tokenizer<'a> {
             _ => {
                 self.state
                     .swap(State::Main)
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+
                 self.next_token_main()
             },
         }
@@ -222,65 +252,66 @@ impl<'a> Tokenizer<'a> {
             self.skip_whitespace();
         }
 
-        match self.input.next() {
+        match self.cursor.next() {
             // `-` at the end of the class (e.g. `-]`) is just a literal
-            Some('-') if matches!(self.input.peek(), Some(']')) => {
-                Ok(self.input.token(TokenKind::Literal('-')))
+            Some('-') if matches!(self.cursor.first(), Some(']')) => {
+                self.tok_kind(TokenKind::Literal('-'))
             },
             // `--` is the difference token
-            Some('-') if matches!(self.input.peek(), Some('-')) => {
-                self.input.next();
-                Ok(self.input.token(TokenKind::Difference))
+            Some('-') if matches!(self.cursor.first(), Some('-')) => {
+                self.cursor.skip(1);
+                self.tok_kind(TokenKind::Difference)
             },
             // `-` following a literal is a range token (e.g. `a-`)
             Some('-') if matches!(self.last_token_kind, Some(TokenKind::Literal(_))) => {
-                Ok(self.input.token(TokenKind::Range))
+                self.tok_kind(TokenKind::Range)
             },
             // In any other case, `-` is just a literal
-            Some('-') => Ok(self.input.token(TokenKind::Literal('-'))),
+            Some('-') => self.tok_kind(TokenKind::Literal('-')),
             // `[:` begins a named class, e.g. `[:alpha:]`
-            Some('[') if matches!(self.input.peek(), Some(':')) => {
+            Some('[') if matches!(self.cursor.first(), Some(':')) => {
                 self.state.push(State::ClassName);
-                Ok(self.input.token(TokenKind::OpenBracket))
+                self.tok_kind(TokenKind::OpenBracket)
             },
             // If not part of `[:`, `[` just begins a new sub-class
             Some('[') => {
                 self.state.push(State::Class);
-                Ok(self.input.token(TokenKind::OpenBracket))
+                self.tok_kind(TokenKind::OpenBracket)
             },
             // `]` ends a class name or a character class and pops its own state
             Some(']') => {
                 self.state
                     .pop()
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                Ok(self.input.token(TokenKind::CloseBracket))
+                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+
+                self.tok_kind(TokenKind::CloseBracket)
             },
             // `^` at the beginning of a character class is a negation
             Some('^') if matches!(self.last_token_kind, Some(TokenKind::OpenBracket)) => {
-                Ok(self.input.token(TokenKind::Negated))
+                self.tok_kind(TokenKind::Negated)
             },
             // `&&` is an intersection token
-            Some('&') if matches!(self.input.peek(), Some('&')) => {
-                self.input.next();
-                Ok(self.input.token(TokenKind::Intersection))
+            Some('&') if matches!(self.cursor.first(), Some('&')) => {
+                self.cursor.skip(1);
+                self.tok_kind(TokenKind::Intersection)
             },
             // `~~` is a symmetrical difference token
-            Some('~') if matches!(self.input.peek(), Some('~')) => {
-                self.input.next();
-                Ok(self.input.token(TokenKind::Symmetrical))
+            Some('~') if matches!(self.cursor.first(), Some('~')) => {
+                self.cursor.skip(1);
+                self.tok_kind(TokenKind::Symmetrical)
             },
             // Special characters can be escaped in classes
             Some('\\') => self.parse_escape_sequence_class(),
             // All other characters are just literals
-            Some(c) => Ok(self.input.token(TokenKind::Literal(c))),
+            Some(c) => self.tok_kind(TokenKind::Literal(c)),
             None => {
                 self.state
                     .pop_all()
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
 
-                Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                self.err(ErrorKind::UnexpectedEOF(String::from(
                     "expected end of character class `]`",
-                ))))
+                )))
             },
         }
     }
@@ -308,32 +339,33 @@ impl<'a> Tokenizer<'a> {
     /// * `[[:xdigit:]]` - `[0-9a-fA-F]`
     fn next_token_class_name(&mut self) -> Result<Token> {
         // The initial `:` was already checked for by the `Class` state
-        self.input.expect(':')?;
+        self.expect(':')?;
 
         // A `^` immediately following the opening `:` is a negation character
-        let negated = self.input.matches('^');
+        let negated = self.cursor.matches('^');
 
         let mut name = String::new();
         loop {
-            match self.input.next() {
+            match self.cursor.next() {
                 // The final `:` character is included in the token
                 Some(':') => break,
                 // Any alphabetic characters are included in the class name
                 Some(c) if c.is_ascii_alphabetic() => name.push(c),
                 // Any other characters are rejected
-                Some(c) => return Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+                Some(c) => return self.err(ErrorKind::UnexpectedChar(c)),
                 None => {
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of named character class `:]`",
-                    ))))
+                    )))
                 },
             }
         }
 
         self.state
             .swap(State::Class)
-            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-        Ok(self.input.token(TokenKind::ClassName(name, negated)))
+            .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+
+        self.tok_kind(TokenKind::ClassName(name, negated))
     }
 
     /// Get a token in the `Range` state
@@ -347,29 +379,31 @@ impl<'a> Tokenizer<'a> {
         // not tolerated
         self.skip_whitespace();
 
-        match self.input.peek() {
+        match self.cursor.first() {
             // The end of the range pops its own state
             Some('}') => {
-                self.input.next();
+                self.cursor.skip(1);
                 self.state
                     .pop()
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                Ok(self.input.token(TokenKind::CloseBrace))
+                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+
+                self.tok_kind(TokenKind::CloseBrace)
             },
             // A comma separates the start and end for the range
             Some(',') => {
-                self.input.next();
-                Ok(self.input.token(TokenKind::Comma))
+                self.cursor.skip(1);
+                self.tok_kind(TokenKind::Comma)
             },
             // Anything else is interpreted as a number; this may fail
             Some(_) => self.parse_number(),
             None => {
                 self.state
                     .pop_all()
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+
+                self.err(ErrorKind::UnexpectedEOF(String::from(
                     "expected end of rance `}` or `,`",
-                ))))
+                )))
             },
         }
     }
@@ -396,60 +430,60 @@ impl<'a> Tokenizer<'a> {
         let mut item = String::new();
 
         loop {
-            match self.input.peek() {
+            match self.cursor.first() {
                 // `=` is also matched via peek when some characters have been
                 // collected in `item` - so if item is empty, then just match
                 // the equal sign since the property name has been returned
                 Some('=') if item.len() == 0 => {
-                    self.input.next();
-                    return Ok(self.input.token(TokenKind::UnicodeEqual(false)));
+                    self.cursor.skip(1);
+                    return self.tok_kind(TokenKind::UnicodeEqual(false));
                 },
                 // `=` when some characters have already been matched denotes
                 // the end of a property name; so return the property name and
                 // leave the `=` character to be matched by the next invocation
                 // of this function
-                Some('=') => return Ok(self.input.token(TokenKind::UnicodePropName(item))),
+                Some('=') => return self.tok_kind(TokenKind::UnicodePropName(item)),
                 // `!` can be the beginning of a negated `=` - but only if it's
                 // followed by an `=`
                 Some('!') if item.len() == 0 => {
-                    self.input.next();
-                    return match self.input.peek() {
+                    self.cursor.skip(1);
+                    return match self.cursor.first() {
                         // It's a `!=` token
                         Some('=') => {
-                            self.input.next();
-                            Ok(self.input.token(TokenKind::UnicodeEqual(true)))
+                            self.cursor.skip(1);
+                            self.tok_kind(TokenKind::UnicodeEqual(true))
                         },
                         // It's just a random `!` - unexpected
-                        Some(c) => Err(self.input.error(ErrorKind::UnexpectedChar(c))),
-                        None => Err(self.input.error(ErrorKind::EndOfFile)),
+                        Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
+                        None => self.err(ErrorKind::EndOfFile),
                     };
                 },
                 // `!` ends the current property name, like `=`
-                Some('!') => return Ok(self.input.token(TokenKind::UnicodePropName(item))),
+                Some('!') => return self.tok_kind(TokenKind::UnicodePropName(item)),
                 // `}` ends `UnicodeProperties` state and pops its own state
                 Some('}') if item.len() == 0 => {
-                    self.input.next();
+                    self.cursor.skip(1);
                     self.state
                         .pop()
-                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                    return Ok(self.input.token(TokenKind::UnicodeLongEnd));
+                        .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+                    return self.tok_kind(TokenKind::UnicodeLongEnd);
                 },
                 // `}` when there is text stored in `item` denotes the end of
                 // a unicode property value; return the value token and leave
                 // the closing brace for the next invocation of this function
-                Some('}') => return Ok(self.input.token(TokenKind::UnicodePropValue(item))),
+                Some('}') => return self.tok_kind(TokenKind::UnicodePropValue(item)),
                 // Alphanumeric characters get added to `item` to be returned
                 // as either property name or value tokens
                 Some(c) if c.is_ascii_alphanumeric() => {
-                    self.input.next();
+                    self.cursor.skip(1);
                     item.push(c)
                 },
                 // Anything else is an unexpected character
-                Some(c) => return Err(self.input.error(ErrorKind::UnexpectedChar(c))),
+                Some(c) => return self.err(ErrorKind::UnexpectedChar(c)),
                 None => {
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of unicode class `}`, `,` `!=` or `=`",
-                    ))))
+                    )))
                 },
             }
         }
@@ -457,17 +491,27 @@ impl<'a> Tokenizer<'a> {
 
     /// Get an immutable copy of the state flags
     fn flags(&mut self) -> Result<&Flags> {
+        let span = self.cursor.span();
+
         match self.state.flags() {
             Ok(flags) => Ok(flags),
-            Err(err) => Err(self.input.error(ErrorKind::InternalStateError(err))),
+            Err(err) => Err(Error {
+                span,
+                kind: ErrorKind::InternalStateError(err),
+            }),
         }
     }
 
     /// Get a mutable copy of the state flags
     fn flags_mut(&mut self) -> Result<&mut Flags> {
+        let span = self.cursor.span();
+
         match self.state.flags_mut() {
             Ok(flags) => Ok(flags),
-            Err(err) => Err(self.input.error(ErrorKind::InternalStateError(err))),
+            Err(err) => Err(Error {
+                span,
+                kind: ErrorKind::InternalStateError(err),
+            }),
         }
     }
 
@@ -493,7 +537,7 @@ impl<'a> Tokenizer<'a> {
         // whitespace and `#` characters.
         let mut skipping_comment = false;
         loop {
-            match self.input.peek() {
+            match self.cursor.first() {
                 // Terminate comment skipping once a newline is seen
                 Some('\n') if skipping_comment => skipping_comment = false,
                 // Skip all whitespace, or any character if in a comment
@@ -504,7 +548,7 @@ impl<'a> Tokenizer<'a> {
                 _ => break,
             }
 
-            self.input.next();
+            self.cursor.skip(1);
         }
     }
 
@@ -514,23 +558,23 @@ impl<'a> Tokenizer<'a> {
     /// which are represented as simple one-letter escape sequences. Unicode
     /// classes are also parsed here, as well as hexadecimal numerical escapes.
     fn parse_escape_sequence_main(&mut self) -> Result<Token> {
-        match self.input.next() {
-            Some('A') => Ok(self.input.token(TokenKind::StartOfText)),
-            Some('z') => Ok(self.input.token(TokenKind::EndOfText)),
-            Some('b') => Ok(self.input.token(TokenKind::WordBoundary)),
-            Some('B') => Ok(self.input.token(TokenKind::NonWordBoundary)),
-            Some('a') => Ok(self.input.token(TokenKind::Literal('\x07'))),
-            Some('f') => Ok(self.input.token(TokenKind::Literal('\x0C'))),
-            Some('t') => Ok(self.input.token(TokenKind::Literal('\t'))),
-            Some('n') => Ok(self.input.token(TokenKind::Literal('\n'))),
-            Some('r') => Ok(self.input.token(TokenKind::Literal('\r'))),
-            Some('v') => Ok(self.input.token(TokenKind::Literal('\x0B'))),
-            Some('d') => Ok(self.input.token(TokenKind::Digit(false))),
-            Some('D') => Ok(self.input.token(TokenKind::Digit(true))),
-            Some('s') => Ok(self.input.token(TokenKind::Whitespace(false))),
-            Some('S') => Ok(self.input.token(TokenKind::Whitespace(true))),
-            Some('w') => Ok(self.input.token(TokenKind::WordChar(false))),
-            Some('W') => Ok(self.input.token(TokenKind::WordChar(true))),
+        match self.cursor.next() {
+            Some('A') => self.tok_kind(TokenKind::StartOfText),
+            Some('z') => self.tok_kind(TokenKind::EndOfText),
+            Some('b') => self.tok_kind(TokenKind::WordBoundary),
+            Some('B') => self.tok_kind(TokenKind::NonWordBoundary),
+            Some('a') => self.tok_kind(TokenKind::Literal('\x07')),
+            Some('f') => self.tok_kind(TokenKind::Literal('\x0C')),
+            Some('t') => self.tok_kind(TokenKind::Literal('\t')),
+            Some('n') => self.tok_kind(TokenKind::Literal('\n')),
+            Some('r') => self.tok_kind(TokenKind::Literal('\r')),
+            Some('v') => self.tok_kind(TokenKind::Literal('\x0B')),
+            Some('d') => self.tok_kind(TokenKind::Digit(false)),
+            Some('D') => self.tok_kind(TokenKind::Digit(true)),
+            Some('s') => self.tok_kind(TokenKind::Whitespace(false)),
+            Some('S') => self.tok_kind(TokenKind::Whitespace(true)),
+            Some('w') => self.tok_kind(TokenKind::WordChar(false)),
+            Some('W') => self.tok_kind(TokenKind::WordChar(true)),
             // Parse a unicode class, whether a simple one-character escape
             // sequence or a braced expression
             Some('p') => self.parse_unicode(false),
@@ -542,13 +586,13 @@ impl<'a> Tokenizer<'a> {
             Some(c) if Tokenizer::is_hex_escape(&c) => self.parse_hex(c),
             // Certain special characters can be escaped to a literal (e.g., \})
             Some(c) if Tokenizer::escapes_to_literal_main(&c) => {
-                Ok(self.input.token(TokenKind::Literal(c)))
+                self.tok_kind(TokenKind::Literal(c))
             },
             // Everything else is an invalid escape sequence
-            Some(c) => Err(self.input.error(ErrorKind::UnrecognizedEscape(c))),
+            Some(c) => self.err(ErrorKind::UnrecognizedEscape(c)),
             // In lieu of an end of file error, we know that an errant \ exists
             // in the input, so use a more specific error
-            None => Err(self.input.error(ErrorKind::UnexpectedChar('\\'))),
+            None => self.err(ErrorKind::UnexpectedChar('\\')),
         }
     }
 
@@ -570,7 +614,7 @@ impl<'a> Tokenizer<'a> {
     /// * \U{7F}
     fn parse_hex(&mut self, ident: char) -> Result<Token> {
         let mut number = String::new();
-        let bounded = self.input.matches('{');
+        let bounded = self.cursor.matches('{');
 
         let digits = match (bounded, ident) {
             (true, _) => 8,
@@ -581,14 +625,14 @@ impl<'a> Tokenizer<'a> {
         };
 
         for _ in 0..digits {
-            match self.input.next() {
+            match self.cursor.next() {
                 Some(c) if c.is_ascii_hexdigit() => number.push(c),
                 Some('}') if bounded => break,
-                Some(c) => return Err(self.input.error(ErrorKind::InvalidHexDigit(c))),
+                Some(c) => return self.err(ErrorKind::InvalidHexDigit(c)),
                 None => {
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of hex literal",
-                    ))))
+                    )))
                 },
             };
         }
@@ -596,8 +640,9 @@ impl<'a> Tokenizer<'a> {
         let value = u32::from_str_radix(&number, 16)
             .expect(&format!("accepted invalid hex string: {}", number));
         let c = char::from_u32(value)
-            .ok_or_else(|| self.input.error(ErrorKind::InvalidCharCode(number)))?;
-        Ok(self.input.token(TokenKind::Literal(c)))
+            .ok_or_else(|| self.raw_err(ErrorKind::InvalidCharCode(number)))?;
+
+        self.tok_kind(TokenKind::Literal(c))
     }
 
     /// Parse a unicode character class, either as a simple one-character
@@ -613,20 +658,20 @@ impl<'a> Tokenizer<'a> {
     ///     negated match of the Greek script
     fn parse_unicode(&mut self, negated: bool) -> Result<Token> {
         // Check for a braced expression and enter the `UnicodeProperties` state
-        if self.input.matches('{') {
+        if self.cursor.matches('{') {
             self.state.push(State::UnicodeProperties);
-            return Ok(self.input.token(TokenKind::UnicodeLongStart(negated)));
+            return self.tok_kind(TokenKind::UnicodeLongStart(negated));
         }
 
         // Otherwise, it's a single-character class
-        match self.input.next() {
+        match self.cursor.next() {
             Some(c) if c.is_ascii_alphabetic() => {
-                Ok(self.input.token(TokenKind::UnicodeShort(c, negated)))
+                self.tok_kind(TokenKind::UnicodeShort(c, negated))
             },
-            Some(c) => Err(self.input.error(ErrorKind::UnexpectedChar(c))),
-            None => Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+            Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
+            None => self.err(ErrorKind::UnexpectedEOF(String::from(
                 "expected single-character unicode general category",
-            )))),
+            ))),
         }
     }
 
@@ -638,19 +683,19 @@ impl<'a> Tokenizer<'a> {
     /// returned as a token
     fn parse_named_group(&mut self) -> Result<Token> {
         // The initial `<` character was checked for in `next_token_group`
-        self.input.expect('<')?;
+        self.expect('<')?;
 
         let mut name = String::new();
         loop {
-            match self.input.next() {
+            match self.cursor.next() {
                 // The closing `>` character ends the name
                 Some('>') => break,
                 // Any character between `<` and `>` goes into the name
                 Some(c) => name.push(c),
                 None => {
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of group name `>`",
-                    ))))
+                    )))
                 },
             }
         }
@@ -658,8 +703,9 @@ impl<'a> Tokenizer<'a> {
         // The `Group` state ends when a group name is matched
         self.state
             .pop()
-            .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-        Ok(self.input.token(TokenKind::Name(name)))
+            .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
+
+        self.tok_kind(TokenKind::Name(name))
     }
 
     /// Parse group flags, whether they apply to the above scope or withing
@@ -710,10 +756,10 @@ impl<'a> Tokenizer<'a> {
         let mut set_ignore_whitespace = None;
 
         loop {
-            match self.input.peek() {
+            match self.cursor.first() {
                 // Only valid flag specifiers are accepted here
                 Some(c) if Tokenizer::is_group_flag(&c) => {
-                    self.input.next();
+                    self.cursor.bump();
                     // If the ignore_whitespace flag is specified, make sure to
                     // set or clear the ignore_whitespace flag in the
                     // tokenizer's state
@@ -734,13 +780,13 @@ impl<'a> Tokenizer<'a> {
                 // The `:` character terminates the flag section and specifies a
                 // non-capturing group
                 Some(':') => {
-                    self.input.next();
+                    self.cursor.bump();
                     non_capturing = true;
                     break;
                 },
                 // The `-` character separates the set and clear flags
                 Some('-') => {
-                    self.input.next();
+                    self.cursor.bump();
                     clearing = true;
                 },
                 // The `)` character terminates the flag section and specifies a
@@ -749,21 +795,22 @@ impl<'a> Tokenizer<'a> {
                 Some(')') => break,
                 // Any other character is invalid here
                 Some(c) => {
-                    self.input.next();
-                    return Err(self.input.error(ErrorKind::UnrecognizedFlag(c)));
+                    self.cursor.bump();
+                    return self.err(ErrorKind::UnrecognizedFlag(c));
                 },
                 None => {
                     self.state
                         .pop_all()
-                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
+
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of group `)` or end of flags `:`",
-                    ))));
+                    )));
                 },
             }
         }
 
-        let result = if non_capturing {
+        if non_capturing {
             // If this is just a non-capturing group with flags, then the
             // ignore_whitespace flag shouldn't be set for the preceeding state
             // and only the current state needs it:
@@ -777,12 +824,12 @@ impl<'a> Tokenizer<'a> {
             // * [Main(false)]               - original flag used once the `)`
             //                                 token pops a state from the stack
             if let Some(val) = set_ignore_whitespace {
-                let mut flags = self.flags_mut()?;
+                let flags = self.flags_mut()?;
                 flags.ignore_space = val
             }
 
-            self.input
-                .token(TokenKind::NonCapturingFlags(set_flags, clear_flags))
+            let kind = TokenKind::NonCapturingFlags(set_flags, clear_flags);
+            self.tok_kind(kind)
         } else {
             // If we're setting the whitespace flag in a flag token, then the
             // state below this one needs to get the flag. The next_main
@@ -803,17 +850,15 @@ impl<'a> Tokenizer<'a> {
                 let this_state = self
                     .state
                     .pop()
-                    .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
+                    .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
 
-                let mut flags = self.flags_mut()?;
+                let flags = self.flags_mut()?;
                 flags.ignore_space = val;
                 self.state.push(this_state);
             }
 
-            self.input.token(TokenKind::Flags(set_flags, clear_flags))
-        };
-
-        Ok(result)
+            self.tok_kind(TokenKind::Flags(set_flags, clear_flags))
+        }
     }
 
     /// Parse an escape sequence in the `Class` state
@@ -826,21 +871,21 @@ impl<'a> Tokenizer<'a> {
     /// literals (e.g. \], \^) as well as some escapes not valid in the `Main`
     /// state (e.g. \&, \-) can be escaped here.
     fn parse_escape_sequence_class(&mut self) -> Result<Token> {
-        match self.input.next() {
-            Some('s') => Ok(self.input.token(TokenKind::Whitespace(false))),
-            Some('S') => Ok(self.input.token(TokenKind::Whitespace(true))),
-            Some('d') => Ok(self.input.token(TokenKind::Digit(false))),
-            Some('D') => Ok(self.input.token(TokenKind::Digit(true))),
-            Some('w') => Ok(self.input.token(TokenKind::WordChar(false))),
-            Some('W') => Ok(self.input.token(TokenKind::WordChar(true))),
+        match self.cursor.next() {
+            Some('s') => self.tok_kind(TokenKind::Whitespace(false)),
+            Some('S') => self.tok_kind(TokenKind::Whitespace(true)),
+            Some('d') => self.tok_kind(TokenKind::Digit(false)),
+            Some('D') => self.tok_kind(TokenKind::Digit(true)),
+            Some('w') => self.tok_kind(TokenKind::WordChar(false)),
+            Some('W') => self.tok_kind(TokenKind::WordChar(true)),
             // Parse a hex escape, which is a numerical representation of a
             // single literal character (e.g. \x7F)
             Some(c) if Tokenizer::is_hex_escape(&c) => self.parse_hex(c),
             Some(c) if Tokenizer::escapes_to_literal_class(&c) => {
-                Ok(self.input.token(TokenKind::Literal(c)))
+                self.tok_kind(TokenKind::Literal(c))
             },
-            Some(c) => Err(self.input.error(ErrorKind::UnrecognizedEscape(c))),
-            None => Err(self.input.error(ErrorKind::UnexpectedChar('\\'))),
+            Some(c) => self.err(ErrorKind::UnrecognizedEscape(c)),
+            None => self.err(ErrorKind::UnexpectedChar('\\')),
         }
     }
 
@@ -851,7 +896,7 @@ impl<'a> Tokenizer<'a> {
     fn parse_number(&mut self) -> Result<Token> {
         let mut number = String::new();
         loop {
-            match self.input.peek() {
+            match self.cursor.first() {
                 // A comma indicates that the next number in the range is coming
                 Some(',') => break,
                 // The closing brace signifies the end of the range
@@ -860,21 +905,22 @@ impl<'a> Tokenizer<'a> {
                 Some(c) if c.is_whitespace() => break,
                 // Any numeric character is added to the current number
                 Some(c) if c.is_numeric() => {
-                    self.input.next();
+                    self.cursor.bump();
                     number.push(c);
                 },
                 // Anything else is an unexpected character
                 Some(c) => {
-                    self.input.next();
-                    return Err(self.input.error(ErrorKind::UnexpectedChar(c)));
+                    self.cursor.bump();
+                    return self.err(ErrorKind::UnexpectedChar(c));
                 },
                 None => {
                     self.state
                         .pop_all()
-                        .map_err(|err| self.input.error(ErrorKind::InternalStateError(err)))?;
-                    return Err(self.input.error(ErrorKind::UnexpectedEOF(String::from(
+                        .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
+
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of range `}`",
-                    ))));
+                    )));
                 },
             }
         }
@@ -885,7 +931,7 @@ impl<'a> Tokenizer<'a> {
             .parse::<usize>()
             .expect(&format!("accepted invalid number: {}", number));
 
-        Ok(self.input.token(TokenKind::Number(value)))
+        self.tok_kind(TokenKind::Number(value))
     }
 
     /// Check whether a character can be escaped in the `Main` state
@@ -921,6 +967,26 @@ impl<'a> Tokenizer<'a> {
         match c {
             'x' | 'u' | 'U' => true,
             _ => false,
+        }
+    }
+
+    fn tok_kind(&mut self, kind: TokenKind) -> Result<Token> {
+        Ok(self.cursor.map_span(|span| Token { span, kind }))
+    }
+
+    fn err<T>(&mut self, kind: ErrorKind) -> Result<T> {
+        Err(self.raw_err(kind))
+    }
+
+    fn raw_err(&mut self, kind: ErrorKind) -> Error {
+        self.cursor.map_span(|span| Error { span, kind })
+    }
+
+    fn expect(&mut self, c: char) -> Result<()> {
+        match self.cursor.next() {
+            Some(found) if found == c => Ok(()),
+            Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
+            None => self.err(ErrorKind::EndOfFile),
         }
     }
 }

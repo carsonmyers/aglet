@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	"aglet",
+	"aglet-derive",
 	"aglet-pretty",
 	"aglet-regex",
 	"aglet-text",

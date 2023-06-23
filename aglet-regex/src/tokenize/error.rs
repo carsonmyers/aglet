@@ -1,7 +1,9 @@
 use std::fmt;
 use std::result;
 
-use aglet_text::Span;
+use aglet_derive::*;
+use aglet_pretty::SpanPrinter;
+use aglet_text::{Cursor, Span};
 
 pub type Result<T> = result::Result<T, Error>;
 

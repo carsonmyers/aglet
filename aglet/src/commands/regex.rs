@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use aglet_pretty::{ColorWhen, PrettyPrintSettings, PrettyPrinter};
+use aglet_pretty::{ColorWhen, Pretty, PrettyPrintSettings, PrettyPrinter, SpanPrinter};
 use aglet_regex::{Parser, Tokenizer};
 use clap::Args;
 use colored::control::ShouldColorize;
@@ -61,45 +61,83 @@ pub fn run(input: Input, args: RegexArgs) -> Result<()> {
         (_, _, true) => ColorWhen::Always,
         _ => ColorWhen::Never,
     };
+    let printer_settings = PrettyPrintSettings::default()
+        .indent("\u{254E}   ".bright_black().to_string().as_ref())
+        .color_when(color_when)
+        .align(!args.no_align)
+        .include_spans(args.spans);
 
     for section in iter {
         let section = section?;
+        run_section(&section, &printer_settings, is_stdin, &args)?;
+    }
 
-        if !is_stdin {
-            println!("{}\n", section.input);
-        }
+    Ok(())
+}
 
-        let printer_settings = PrettyPrintSettings::default()
-            .indent("\u{254E}   ".bright_black().to_string().as_ref())
-            .color_when(color_when)
-            .align(!args.no_align)
-            .include_spans(args.spans);
+fn run_section(
+    section: &InputSection,
+    printer_settings: &PrettyPrintSettings,
+    is_stdin: bool,
+    args: &RegexArgs,
+) -> Result<()> {
+    if !is_stdin {
+        println!("{}\n", section.input);
+    }
 
-        if args.tokens {
-            let mut printer = PrettyPrinter::new(printer_settings.clone());
-            let tokenizer = Tokenizer::new(section.input.as_ref());
-            if args.meta {
-                for token_stack in tokenizer.into_token_stack_iter() {
-                    printer.print(&token_stack?)?;
-                }
-            } else {
-                for token in tokenizer {
-                    printer.print(&token?)?;
-                }
+    if args.tokens {
+        print_tokens(section, printer_settings.clone(), args)?;
+    }
+
+    if args.ast {
+        print_ast(section, printer_settings.clone())?;
+    }
+
+    Ok(())
+}
+
+fn print_tokens(
+    section: &InputSection,
+    printer_settings: PrettyPrintSettings,
+    args: &RegexArgs,
+) -> Result<()> {
+    let mut printer = PrettyPrinter::new(printer_settings.clone());
+
+    let tokenizer = Tokenizer::new(section.input.as_ref());
+    if args.meta {
+        for token_stack in tokenizer.into_token_stack_iter() {
+            match token_stack {
+                Ok(stack) => {
+                    printer.print(&stack)?;
+                },
+                Err(e) => println!("{:?}", e),
             }
-
-            println!("TOKENS:\n{}\n", printer.finish()?);
         }
-
-        if args.ast {
-            let mut printer = PrettyPrinter::new(printer_settings.clone());
-
-            let tokens = Tokenizer::new(section.input.as_ref()).collect_vec();
-            let ast = Parser::new(tokens.into_iter()).parse()?;
-
-            println!("AST:\n{}\n", printer.print(&ast)?.finish()?);
+    } else {
+        for token in tokenizer {
+            match token {
+                Ok(tok) => {
+                    printer.print(&tok)?;
+                },
+                Err(e) => println!("{:?}", e),
+            }
         }
     }
+
+    println!("TOKENS:\n{}\n", printer.finish()?);
+
+    Ok(())
+}
+
+fn print_ast(section: &InputSection, printer_settings: PrettyPrintSettings) -> Result<()> {
+    let mut printer = PrettyPrinter::new(printer_settings);
+
+    let tokens = Tokenizer::new(section.input.as_ref()).collect_vec();
+    match Parser::new(tokens.into_iter()).parse() {
+        Ok(ast) => println!("AST:\n{}\n", printer.print(&ast)?.finish()?),
+        Err(e) => println!("{:?}", e),
+    };
+
     Ok(())
 }
 

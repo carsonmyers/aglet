@@ -1,6 +1,6 @@
 use std::iter::Peekable;
 
-use aglet_text::{Position, Span};
+use aglet_text::Span;
 
 use crate::parse::error::*;
 use crate::tokenize::{self, Token};
@@ -18,11 +18,11 @@ impl<'a> Input<'a> {
         let data = Box::new(data) as Box<dyn Iterator<Item = tokenize::Result<Token>>>;
         Self {
             data: data.peekable(),
-            span: Span::new(),
+            span: Span::new(0, 0),
         }
     }
 
-    pub fn position(&self) -> Position {
+    pub fn position(&self) -> usize {
         self.span.end
     }
 
