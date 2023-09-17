@@ -107,15 +107,21 @@ pub enum TokenKind {
     /// End of a group `)`
     CloseGroup,
 
-    /// Non-capturing group tag `?:` (e.g. `(?:.*)`)
-    NonCapturing,
+    /// Start of group options `?` in e.g. `(?<name>:...)`
+    OpenGroupOptions,
+    
+    /// End of group options `:` in e.g. `(?<name>:...)`
+    CloseGroupOptions,
 
-    /// Group name tag `?P<Name>` (e.g. `(?P<Name>.*)`)
+    /// Group or class name
     ///
     /// # Items
     ///
     /// * `0` - group name
     Name(String),
+    
+    /// Flag 
+    Flag(char),
 
     /// Flags group tag (e.g. `(?i-x)`)
     ///
