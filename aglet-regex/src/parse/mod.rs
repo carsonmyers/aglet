@@ -2,6 +2,7 @@ pub mod ast;
 pub mod error;
 mod input;
 pub mod parser;
+mod parser_macros;
 mod pretty;
 
 #[cfg(test)]

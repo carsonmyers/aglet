@@ -98,6 +98,7 @@ pub enum State {
 
 #[derive(Default, Clone, Copy, PartialEq)]
 pub struct Flags {
+    pub(crate) unset_flags: bool,
     pub(crate) ignore_space: bool,
 }
 

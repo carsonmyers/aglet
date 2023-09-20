@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::iter;
 
 use aglet_text::Cursor;
@@ -10,10 +11,10 @@ use crate::tokenize::{assert_next_err, assert_next_none, assert_next_tok};
 
 /// Tokenizer for a regular expression
 pub struct Tokenizer<'a> {
-    cursor:          Cursor<'a>,
-    state:           StateStack,
+    cursor: Cursor<'a>,
+    state: StateStack,
     last_token_kind: Option<TokenKind>,
-    is_eof:          bool,
+    is_eof: bool,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -33,10 +34,10 @@ impl<'a> Tokenizer<'a> {
     /// ```
     pub fn new<C: Into<Cursor<'a>>>(cursor: C) -> Self {
         Tokenizer {
-            cursor:          cursor.into(),
-            state:           StateStack::new(),
+            cursor: cursor.into(),
+            state: StateStack::new(),
             last_token_kind: None,
-            is_eof:          false,
+            is_eof: false,
         }
     }
 
@@ -48,6 +49,7 @@ impl<'a> Tokenizer<'a> {
     ///
     /// ```
     /// use aglet_regex::tokenize::*;
+    /// use aglet_regex::tokenize::token::Flag;
     /// let mut tr = Tokenizer::new("(?x-i)");
     /// assert_eq!(
     ///     tr.next_token(),
@@ -55,7 +57,19 @@ impl<'a> Tokenizer<'a> {
     /// );
     /// assert_eq!(
     ///     tr.next_token(),
-    ///     Ok(Token::new_with_offsets(TokenKind::Flags(vec!['x'], vec!['i']), 1, 5)),
+    ///     Ok(Token::new_with_offsets(TokenKind::OpenGroupOptions, 1, 2)),
+    /// );
+    /// assert_eq!(
+    ///     tr.next_token(),
+    ///     Ok(Token::new_with_offsets(TokenKind::Flag(Flag::IgnoreWhitespace), 2, 3)),
+    /// );
+    /// assert_eq!(
+    ///     tr.next_token(),
+    ///     Ok(Token::new_with_offsets(TokenKind::FlagDelimiter, 3, 4)),
+    /// );
+    /// assert_eq!(
+    ///     tr.next_token(),
+    ///     Ok(Token::new_with_offsets(TokenKind::Flag(Flag::CaseInsensitive), 4, 5)),
     /// );
     /// assert_eq!(
     ///     tr.next_token(),
@@ -140,11 +154,17 @@ impl<'a> Tokenizer<'a> {
             Some('+') => self.tok_kind(TokenKind::Plus),
             Some('|') => self.tok_kind(TokenKind::Alternate),
 
-            // The `(` token enters the group parsing state, e.g. `(?:abc)`
-            // This state is swapped with another `Main` state after the header
-            // is matched - a group name, flags, non-capturing token, etc.
-            Some('(') => {
+            // The `(` token enters a group state - if it's just a capturing group
+            // (e.g. `(xyz)`) then just another `Main` state is used to parse the sub-expression.
+            // The group might have a header that starts with `?` (e.g. `(?P<name>xyz)`), in which
+            // case enter the `Group` state to tokenize it before optionally returning to the
+            // `Main` state.
+            Some('(') if matches!(self.cursor.first(), Some('?')) => {
                 self.state.push(State::Group);
+                self.tok_kind(TokenKind::OpenGroup)
+            },
+            Some('(') => {
+                self.state.push(State::Main);
                 self.tok_kind(TokenKind::OpenGroup)
             },
 
@@ -195,48 +215,75 @@ impl<'a> Tokenizer<'a> {
     /// another `Main` state, in case there is an expression inside the group
     /// that needs to be matched
     fn next_token_group(&mut self) -> Result<Token> {
-        match self.cursor.first() {
-            // The group header always begins with a `?`
-            Some('?') => {
-                match self.cursor.second() {
-                    // `?:` marks a non-capturing group
-                    Some(':') => {
-                        self.cursor.skip(2);
-                        self.tok_kind(TokenKind::NonCapturing)
-                    },
-                    // `?P` is the beginning of a named group, e.g. `(?P<name>)`
-                    Some('P') => {
-                        self.cursor.skip(2);
-                        self.parse_named_group()
-                    },
-                    // anything else is setting flags, either for the scope
-                    // above or for whatever follows in the group
-                    Some(_) => {
-                        self.cursor.skip(1);
-                        self.parse_flags()
-                    },
-                    None => {
-                        self.state
-                            .pop_all()
-                            .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
+        if matches!(self.last_token_kind, Some(TokenKind::OpenGroupName)) {
+            return self.parse_named_group();
+        }
 
-                        self.err(ErrorKind::UnexpectedEOF(String::from(
-                            "expected `:`, `P`, or group flags",
-                        )))
-                    },
-                }
-            },
-            // Once the group header has been turned into tokens, swap with the
-            // main state to tokenize the remainder of the group (even if the
-            // remainder is just a `)` token to close the group and pop the
-            // state)
-            _ => {
+        match self.cursor.next() {
+            Some('?') => self.tok_kind(TokenKind::OpenGroupOptions),
+            Some(':') => {
                 self.state
                     .swap(State::Main)
-                    .or_else(|err| self.err(ErrorKind::InternalStateError(err)))?;
-
-                self.next_token_main()
+                    .map_err(|e| self.err(ErrorKind::InternalStateError(e)))?;
+                self.tok_kind(TokenKind::CloseGroupOptions)
             },
+            Some('P') if matches!(self.cursor.first(), Some('<')) => {
+                self.cursor.skip(1);
+                self.tok_kind(TokenKind::OpenGroupName)
+            },
+            Some('<') => self.tok_kind(TokenKind::OpenGroupName),
+            Some('>') => {
+                self.state
+                    .swap(State::Main)
+                    .map_err(|e| self.err(ErrorKind::InternalStateError(e)))?;
+                self.tok_kind(TokenKind::CloseGroupName)
+            },
+            Some('-') => {
+                {
+                    let flags = self.state.flags_mut()?;
+                    flags.unset_flags = true;
+                }
+
+                self.tok_kind(TokenKind::FlagDelimiter)
+            },
+            Some(')') => {
+                let is_flag_group = match self.last_token_kind {
+                    Ok(TokenKind::Flag(_) | TokenKind::FlagDelimiter) => true,
+                    _ => false,
+                };
+
+                if is_flag_group {
+                    let src_flags = self.state.flags()?;
+                    self.state.pop()?;
+                    let mut dst_flags = self.state.flags_mut()?;
+
+                    dst_flags.ignore_space = src_flags.ignore_space;
+                } else {
+                    self.state.pop()?;
+                }
+
+                self.tok_kind(TokenKind::CloseGroup)
+            },
+            Some(c) if Flag::is_flag_char(c) => {
+                let flag = c.try_into().unwrap();
+
+                {
+                    let flags = self.state.flags_mut()?;
+                    if flag.is_ignore_whitespace() {
+                        flags.ignore_space = !flags.unset_flags;
+                    }
+                }
+
+                self.tok_kind(TokenKind::Flag(c.try_into().unwrap()))
+            },
+            Some(c) if c.is_alphabetic() => self.err(ErrorKind::UnrecognizedFlag(c)),
+            Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
+            None if matches!(self.last_token_kind, Some(TokenKind::Name(_))) => self.err(
+                ErrorKind::UnexpectedEOF(String::from("Expected end of group name `>`")),
+            ),
+            None => self.err(ErrorKind::UnexpectedEOF(String::from(
+                "Expected end of group `)`",
+            ))),
         }
     }
 
@@ -708,159 +755,6 @@ impl<'a> Tokenizer<'a> {
         self.tok_kind(TokenKind::Name(name))
     }
 
-    /// Parse group flags, whether they apply to the above scope or withing
-    /// a non-capturing group.
-    ///
-    /// Group flags are as follows:
-    ///
-    /// * `i` - case insensitive
-    /// * `m` - multiline mode (^ and * match begin/end of line)
-    /// * `s` - `.` matches `\n`
-    /// * `U` - swap the meaning of `x*` and `x*?`
-    /// * `u` - unicode support (enabled by default)
-    /// * `x` - ignore whitespace and allow line comments (starting with `#`)
-    ///
-    /// Flags can be set for a non-capturing group such that they don't escape
-    /// that group:
-    ///
-    /// `(?i:NoT cAsE sEnSiTiVe) case sensitive`
-    ///
-    /// Or can set the flags of the enclosing scope going forwards:
-    ///
-    /// `case sensitive (?i) NoT cAsE sEnSiTiVe`
-    ///
-    /// Flags can be set by appearing in the front of the group, or cleared
-    /// by appearing in the end of a group after a `-` character:
-    ///
-    /// `{?i:NoT cAsE sEnSiTiVe (?-i:case sensitive))`
-    ///
-    /// Both set and cleared flags are stored in the token to be used in the
-    /// interpreter, but the ignore whitespace flag `x` changes the function of
-    /// the tokenizer itself, as it will stop returning whitespace and comments
-    /// as literal tokens and skip them instead. For this reason, the
-    /// tokenizer's state stack keeps track of the ignore_whitespace flag.
-    fn parse_flags(&mut self) -> Result<Token> {
-        // Flags set by the group
-        let mut set_flags = Vec::new();
-        // Flags cleared by the group
-        let mut clear_flags = Vec::new();
-        // Whether the tokenizer is in a clearing state or not; all flags from
-        // here are considered cleared
-        let mut clearing = false;
-        // Whether the group is non-capturing, i.e. the flag state is contained
-        // within the group or escapes to the enclosing scope
-        let mut non_capturing = false;
-        // Whether to update the ignore_whitespace flag in either the current
-        // group or the enclosing scope, depending on whether this is a
-        // non-capturing group or not
-        let mut set_ignore_whitespace = None;
-
-        loop {
-            match self.cursor.first() {
-                // Only valid flag specifiers are accepted here
-                Some(c) if Tokenizer::is_group_flag(&c) => {
-                    self.cursor.bump();
-                    // If the ignore_whitespace flag is specified, make sure to
-                    // set or clear the ignore_whitespace flag in the
-                    // tokenizer's state
-                    if c == 'x' {
-                        set_ignore_whitespace = Some(!clearing);
-                    }
-
-                    if clearing {
-                        // Clear the flag if we're in the clearing portion of
-                        // the flag section
-                        clear_flags.push(c)
-                    } else {
-                        // Set the flag if we're not in the clearing portion
-                        // of the flag section
-                        set_flags.push(c)
-                    }
-                },
-                // The `:` character terminates the flag section and specifies a
-                // non-capturing group
-                Some(':') => {
-                    self.cursor.bump();
-                    non_capturing = true;
-                    break;
-                },
-                // The `-` character separates the set and clear flags
-                Some('-') => {
-                    self.cursor.bump();
-                    clearing = true;
-                },
-                // The `)` character terminates the flag section and specifies a
-                // flag group that affects the enclosing scope (i.e. not a non-
-                // capturing group)
-                Some(')') => break,
-                // Any other character is invalid here
-                Some(c) => {
-                    self.cursor.bump();
-                    return self.err(ErrorKind::UnrecognizedFlag(c));
-                },
-                None => {
-                    self.state
-                        .pop_all()
-                        .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
-
-                    return self.err(ErrorKind::UnexpectedEOF(String::from(
-                        "expected end of group `)` or end of flags `:`",
-                    )));
-                },
-            }
-        }
-
-        if non_capturing {
-            // If this is just a non-capturing group with flags, then the
-            // ignore_whitespace flag shouldn't be set for the preceeding state
-            // and only the current state needs it:
-            //
-            // e.g. turning the ignore_whitespace flag on:
-            //
-            // * [Main(false), Group(false)] - start of parse_flags
-            // * [Main(false), Group(true)]  - set the flag here
-            // * [Main(false), Main(true)]   - Group is swapped with Main once
-            //                                 the group header is parsed
-            // * [Main(false)]               - original flag used once the `)`
-            //                                 token pops a state from the stack
-            if let Some(val) = set_ignore_whitespace {
-                let flags = self.flags_mut()?;
-                flags.ignore_space = val
-            }
-
-            let kind = TokenKind::NonCapturingFlags(set_flags, clear_flags);
-            self.tok_kind(kind)
-        } else {
-            // If we're setting the whitespace flag in a flag token, then the
-            // state below this one needs to get the flag. The next_main
-            // function will pop the group state, so replace it here after
-            // setting the flag:
-            //
-            // e.g. turning the ignore_whitespace flag on:
-            //
-            // * [Main(false), Group(false)] - start of parse_flags
-            // * [Main(false)]               - pop Group state
-            // * [Main(true)]                - set the flag
-            // * [Main(true), Group(true)]   - re-push the original state,
-            //                                 the flags will be copied
-            // * [Main(true), Main(true)]    - Group is swapped with Main once
-            //                                 the group header is parsed
-            // * [Main(true)]                - next_main will pop the state
-            if let Some(val) = set_ignore_whitespace {
-                let this_state = self
-                    .state
-                    .pop()
-                    .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
-
-                let flags = self.flags_mut()?;
-                flags.ignore_space = val;
-                self.state.push(this_state);
-            }
-
-            self.tok_kind(TokenKind::Flags(set_flags, clear_flags))
-        }
-    }
-
     /// Parse an escape sequence in the `Class` state
     ///
     /// Escape sequences in the class state differ from the main state in that
@@ -948,15 +842,6 @@ impl<'a> Tokenizer<'a> {
     fn escapes_to_literal_class(c: &char) -> bool {
         match c {
             '^' | '&' | '~' | '-' | '[' | ']' | ':' | '\\' => true,
-            _ => false,
-        }
-    }
-
-    /// Check whether a character is a valid group flag (case insensitive,
-    /// ignore whitespace, enable unicode, etc.)
-    fn is_group_flag(c: &char) -> bool {
-        match c {
-            'i' | 'm' | 's' | 'U' | 'u' | 'x' => true,
             _ => false,
         }
     }
@@ -1181,7 +1066,8 @@ mod tests {
         let tr = Tokenizer::new(r"(?:ab)");
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::NonCapturing,
+            TokenKind::OpenGroupOptions,
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::CloseGroup,
@@ -1228,7 +1114,11 @@ mod tests {
         let tr = Tokenizer::new(r"(?isUx)");
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['i', 's', 'U', 'x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::DotMatchesNewline),
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
         ];
 
@@ -1241,7 +1131,10 @@ mod tests {
         let tr = Tokenizer::new(r"(?mx:a)b");
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::NonCapturingFlags(vec!['m', 'x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::MultiLine),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
             TokenKind::Literal('b'),
@@ -1256,13 +1149,24 @@ mod tests {
         let tr = Tokenizer::new(r"(?is-Ux)(?-iU:)(?sx-)");
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['i', 's'], vec!['U', 'x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::DotMatchesNewline),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
-            TokenKind::NonCapturingFlags(vec![], vec!['i', 'U']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::SwapGreed),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['s', 'x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::DotMatchesNewline),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::FlagDelimiter,
             TokenKind::CloseGroup,
         ];
 
@@ -1279,12 +1183,15 @@ mod tests {
             TokenKind::Literal('\n'),
             TokenKind::Literal('b'),
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec![], vec!['x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::Literal(' '),
             TokenKind::Literal('a'),
@@ -1302,10 +1209,14 @@ mod tests {
 
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::NonCapturingFlags(vec!['x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('z'),
             TokenKind::OpenGroup,
-            TokenKind::NonCapturingFlags(vec![], vec!['x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::Literal(' '),
             TokenKind::Literal('\n'),
             TokenKind::Literal('y'),
@@ -1326,7 +1237,8 @@ mod tests {
         let tr = Tokenizer::new("(?x)#skip this comment\na$");
         let expected = vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['x'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::Literal('a'),
             TokenKind::EndOfLine,

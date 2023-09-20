@@ -1,8 +1,9 @@
+use std::convert::TryFrom;
 use std::fmt;
 
 use aglet_text::{Cursor, Span};
 
-use crate::tokenize::error::Error;
+use crate::tokenize::error::{Error, ErrorKind};
 use crate::tokenize::state::StateStack;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -17,6 +18,60 @@ impl fmt::Debug for Token {
             .field(&self.span)
             .field(&self.kind)
             .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Flag {
+    /// `i`: Letters match regardless of case
+    CaseInsensitive,
+
+    /// `m`: `^` and `$` match the beginning and end of a line
+    MultiLine,
+
+    /// `s`: allow `.` to match `\n`
+    DotMatchesNewline,
+
+    /// `R`: use `\r\n` when multi-line mode is enabled
+    CRLFMode,
+
+    /// `U`: swap the meaning of `x*` and `x*?`
+    SwapGreed,
+
+    /// `u`: enable unicode support
+    Unicode,
+
+    /// `x`: ignore whitespace and enable line comments (beginning with `#`)
+    IgnoreWhitespace,
+}
+
+impl TryFrom<char> for Flag {
+    type Error = ErrorKind;
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            'i' => Ok(Self::CaseInsensitive),
+            'm' => Ok(Self::MultiLine),
+            's' => Ok(Self::DotMatchesNewline),
+            'R' => Ok(Self::CRLFMode),
+            'U' => Ok(Self::SwapGreed),
+            'u' => Ok(Self::Unicode),
+            'x' => Ok(Self::IgnoreWhitespace),
+            c => Err(ErrorKind::UnrecognizedFlag(c)),
+        }
+    }
+}
+
+impl Flag {
+    pub fn is_flag_char(c: char) -> bool {
+        match c {
+            'i' | 'm' | 's' | 'U' | 'u' | 'x' => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_ignore_whitespace(&self) -> bool {
+        matches!(self, Self::IgnoreWhitespace)
     }
 }
 
@@ -107,11 +162,17 @@ pub enum TokenKind {
     /// End of a group `)`
     CloseGroup,
 
-    /// Start of group options `?` in e.g. `(?<name>:...)`
+    /// Start of group options `?` in e.g. `(?<name>...)`
     OpenGroupOptions,
     
-    /// End of group options `:` in e.g. `(?<name>:...)`
+    /// End of group options `:` in e.g. `(?isx:...)`
     CloseGroupOptions,
+
+    /// Start of group name `<` or `P<` in e.g. `(?P<name>...)`
+    OpenGroupName,
+
+    /// End of group name `>` in e.g. `(?<name>...)`
+    CloseGroupName,
 
     /// Group or class name
     ///
@@ -119,32 +180,12 @@ pub enum TokenKind {
     ///
     /// * `0` - group name
     Name(String),
-    
-    /// Flag 
-    Flag(char),
 
-    /// Flags group tag (e.g. `(?i-x)`)
-    ///
-    /// A flag group has no contents and matches no characters. Instead, it uses flags
-    /// to alter the behaviour of the enclosing group (or the whole expression if not in
-    /// an enclosing group)
-    ///
-    /// # Items
-    ///
-    /// * `0` - flags to be set (start taking effect)
-    /// * `1` - flags to be cleared (stop taking effect)
-    Flags(Vec<char>, Vec<char>),
+    /// Flags in group options or a non-capturing flags group (e.g. `(?i-x)`)
+    Flag(Flag),
 
-    /// Non-capturing flags group tag (e.g. `(?i-x:.*)`)
-    ///
-    /// Flags set in this manner apply only to the non-capturing group in which they're
-    /// specified, i.e. the opposite behaviour of the [flag group](TokenKind::Flags).
-    ///
-    /// # Items
-    ///
-    /// * `0` - flags to be set (start taking effect)
-    /// * `1` - flags to be cleared (stop taking effect)
-    NonCapturingFlags(Vec<char>, Vec<char>),
+    /// Delimiter character `-` between flags to be set and flags to be cleared (e.g. `(?i-x)`)
+    FlagDelimiter,
 
     // Character classes ==================================================
     /// Open bracket `[` beginning a specified character class or a posix class
@@ -255,6 +296,18 @@ impl TokenKind {
             | TokenKind::NonWordBoundary => true,
             _ => false,
         }
+    }
+
+    pub fn is_flag(&self) -> bool {
+        matches!(self, TokenKind::Flag(_))
+    }
+
+    pub fn is_flag_delimiter(&self) -> bool {
+        matches!(self, TokenKind::FlagDelimiter)
+    }
+
+    pub fn is_flag_or_delimiter(&self) -> bool {
+        self.is_flag() || self.is_flag_delimiter()
     }
 
     pub fn is_range(&self) -> bool {

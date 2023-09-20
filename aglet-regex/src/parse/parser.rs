@@ -4,16 +4,9 @@ use aglet_text::Span;
 
 use crate::parse::ast::*;
 use crate::parse::error::*;
-use crate::parse::input::{
-    expect_tok,
-    illegal_next_tok,
-    match_one,
-    match_tok,
-    matches_one,
-    matches_tok,
-    Input,
-};
-use crate::tokenize::{self, Token, TokenKind};
+use crate::parse::input::Input;
+use crate::parse::parser_macros::*;
+use crate::tokenize::{self, Flag, Token, TokenKind};
 
 /// Parse regular expressions from a [token stream](tokenize::Tokenizer)
 ///
@@ -53,10 +46,10 @@ use crate::tokenize::{self, Token, TokenKind};
 /// group ->
 ///     | '(' group_contents ')'
 /// group_contents ->
-///     | NON_CAPTURING expr
-///     | NON_CAPTURING_FLAGS expr
-///     | GROUP_NAME expr
-///     | FLAGS
+///     | '?' flags? ':' expr
+///     | '?' flags
+///     | '?' 'P'? '<' GROUP_NAME '>' expr
+///     | expr
 /// class ->
 ///     | unicode_class
 ///     | '[' specified_class ']'
@@ -85,7 +78,7 @@ use crate::tokenize::{self, Token, TokenKind};
 ///     | '&&' spec_item spec_set?
 /// ```
 pub struct Parser<'a> {
-    input:       Input<'a>,
+    input: Input<'a>,
     group_index: usize,
 }
 
@@ -99,7 +92,7 @@ impl<'a> Parser<'a> {
         T: Iterator<Item = tokenize::Result<Token>> + 'a,
     {
         Parser {
-            input:       Input::new(input),
+            input: Input::new(input),
             group_index: 1,
         }
     }
@@ -149,7 +142,7 @@ impl<'a> Parser<'a> {
 
             // continue matching expressions as alternates as long as there are more
             // `|` symbols separating them
-            let matched_pipe = matches_tok!(self.input; TokenKind::Alternate);
+            let matched_pipe = matches_tok!(TokenKind::Alternate);
             if !matched_pipe {
                 break;
             }
@@ -280,33 +273,31 @@ impl<'a> Parser<'a> {
     ///     | NUMBER? (',' NUMBER?)?
     /// ```
     pub fn parse_repetition_spec(&mut self) -> Result<Option<RepetitionKind>> {
-        let res = parse_alts![
-            { self.parse_question() }
-            { self.parse_star() }
-            { self.parse_plus() }
-            { self.parse_repetition_range() }
-        ];
-
-        Ok(res)
+        self.parse_alts(vec![
+            Self::parse_question,
+            Self::parse_star,
+            Self::parse_plus,
+            Self::parse_repetition_range,
+        ])
     }
 
     /// Parse the zero-or-one quantity specifier (`?`)
     pub fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
-        match_tok!(self.input; _, TokenKind::Question);
+        match_tok!(TokenKind::Question);
 
         Ok(Some(RepetitionKind::ZeroOrOne))
     }
 
     /// Parse the zero-or-more quantity specifier (`*`)
     pub fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
-        match_tok!(self.input; _, TokenKind::Star);
+        match_tok!(TokenKind::Star);
 
         Ok(Some(RepetitionKind::ZeroOrMore))
     }
 
     /// Parse the one-or-more quantity specifier (`+`)
     pub fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
-        match_tok!(self.input; _, TokenKind::Plus);
+        match_tok!(TokenKind::Plus);
 
         Ok(Some(RepetitionKind::OneOrMore))
     }
@@ -336,28 +327,27 @@ impl<'a> Parser<'a> {
     ///     | NUMBER? (',' NUMBER?)?
     /// ```
     pub fn parse_repetition_range(&mut self) -> Result<Option<RepetitionKind>> {
-        match_tok!(self.input; span_start, TokenKind::OpenBrace);
+        match_tok!(TokenKind::OpenBrace, span_start);
 
         // both numbers are optional, `{,}` is equivalent to `{0,}` and `*`
         let mut start: Option<usize> = None;
         let mut end: Option<usize> = None;
 
         // first number
-        matches_tok!(self.input; TokenKind::Number(number), |_| {
+        try_match_tok!(|TokenKind::Number(number)| {
             start = Some(number);
-            Ok(())
         });
 
         // the second number is only allowed if a comma is present
-        if matches_tok!(self.input; TokenKind::Comma) {
+        if matches_tok!(TokenKind::Comma) {
             // second number
-            matches_tok!(self.input; TokenKind::Number(number), |_| {
+            try_match_tok!(|TokenKind::Number(number)| {
                 end = Some(number);
                 Ok(())
             });
         }
 
-        expect_tok!(self.input, "end of range `}`"; span_end, TokenKind::CloseBrace);
+        expect_tok!(TokenKind::CloseBrace, span_end, "end of range `}`");
 
         let span = Span::wrap(&span_start, &span_end);
         Ok(Some(RepetitionKind::Range(Range { span, start, end })))
@@ -388,30 +378,28 @@ impl<'a> Parser<'a> {
     ///     | class
     /// ```
     pub fn parse_item(&mut self) -> Result<Option<Expr>> {
-        illegal_next_tok!(self.input, "`.`, `[`, `(`, boundary, class, or literal"; [
+        illegal_next_tok!([
             TokenKind::Star,
             TokenKind::Plus,
             TokenKind::Question,
             TokenKind::OpenBrace,
-        ]);
+        ], "`.`, `[`, `(`, boundary, class, or literal");
 
-        let res = parse_alts![
-            { self.parse_dot() }
-            { self.parse_literal() }
-            { self.parse_digit_class() }
-            { self.parse_whitespace_class() }
-            { self.parse_word_class() }
-            { self.parse_boundary() }
-            { self.parse_group() }
-            { self.parse_class() }
-        ];
-
-        Ok(res)
+        self.parse_alts(vec![
+            Self::parse_dot,
+            Self::parse_literal,
+            Self::parse_digit_class,
+            Self::parse_whitespace_class,
+            Self::parse_word_class,
+            Self::parse_boundary,
+            Self::parse_group,
+            Self::parse_class,
+        ])
     }
 
     /// Parse the "any" item (`.`)
     pub fn parse_dot(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::Dot);
+        match_tok!(TokenKind::Dot, span);
 
         Ok(Some(Expr {
             span,
@@ -421,7 +409,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a literal item (a single character)
     pub fn parse_literal(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::Literal(c));
+        match_tok!(TokenKind::Literal(c), span);
 
         Ok(Some(Expr {
             span,
@@ -431,7 +419,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a digit short class, `\d` or `\D`
     pub fn parse_digit_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::Digit(negated));
+        match_tok!(TokenKind::Digit(negated), span);
 
         Ok(Some(Expr {
             span,
@@ -441,7 +429,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a whitespace short class, `\s` or `\S`
     pub fn parse_whitespace_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::Whitespace(negated));
+        match_tok!(TokenKind::Whitespace(negated), span);
 
         Ok(Some(Expr {
             span,
@@ -451,7 +439,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a word character short class, `\w` or `\W`
     pub fn parse_word_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::WordChar(negated));
+        match_tok!(TokenKind::WordChar(negated), span);
 
         Ok(Some(Expr {
             span,
@@ -464,7 +452,7 @@ impl<'a> Parser<'a> {
     /// Boundaries have already been condensed into single tokens by the tokenizer,
     /// but may be a single character (e.g. `$` or `^`) or several (`\b`)
     pub fn parse_boundary(&mut self) -> Result<Option<Expr>> {
-        let tok = match_tok!(self.input; TokenKind::is_boundary);
+        let tok = match_tok!(TokenKind::is_boundary);
 
         let span = tok.span;
         let kind = match BoundaryKind::try_from(tok.kind) {
@@ -506,12 +494,12 @@ impl<'a> Parser<'a> {
     ///     | FLAGS
     /// ```
     pub fn parse_group(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span_start, TokenKind::OpenGroup);
+        match_tok!(TokenKind::OpenGroup, span_start);
 
         // use a sub-parse to match the group's type and its contents, if applicable
         let kind = self.parse_group_contents()?;
 
-        expect_tok!(self.input, "end of group `)`"; span_end, TokenKind::CloseGroup);
+        expect_tok!(TokenKind::CloseGroup, span_end, "end of group `)`");
 
         let span = Span::wrap(&span_start, &span_end);
 
@@ -534,40 +522,102 @@ impl<'a> Parser<'a> {
     ///
     /// ```grammar
     /// group_contents ->
-    ///     | NON_CAPTURING expr
-    ///     | NON_CAPTURING_FLAGS expr
-    ///     | GROUP_NAME expr
-    ///     | FLAGS
+    ///     | '?' flags? ':' expr
+    ///     | '?' flags
+    ///     | '?' 'P'? '<' GROUP_NAME '>' expr
     ///     | expr
     /// ```
     ///
     /// [1]: crate::parse::Parser::parse_group
     pub fn parse_group_contents(&mut self) -> Result<GroupKind> {
-        let res = parse_alts![
-            { self.parse_non_capturing_group() }
-            { self.parse_non_capturing_flags_group() }
-            { self.parse_named_group() }
-            { self.parse_flag_group() }
-            { self.parse_capturing_group() }
-        ]
-        // one of the group contents parsers must always produce a match
-        .expect("group contents should not be None");
+        let res = self
+            .parse_alts(vec![
+                Self::parse_group_with_header,
+                Self::parse_capturing_group,
+            ])?
+            // one of the group contents parsers must always produce a match
+            .expect("group contents should not be None");
 
         Ok(res)
     }
 
+    pub fn parse_group_with_header(&mut self) -> Result<GroupKind> {
+        match_tok!(TokenKind::OpenGroupOptions, span_start);
+
+        let res = self
+            .parse_alts(vec![
+                |parser| Self::parse_named_group(parser, span_start),
+                |parser| Self::parse_non_capturing_group(parser, span_start),
+            ])?
+            .expect("group contents should not be None");
+
+        Ok(res)
+    }
+
+    /// Parse a named group
+    ///
+    /// Named groups are capturing groups, but instead of being identified by a
+    /// number, are also identified with a string.
+    ///
+    /// Named groups begin with `?P<name>` or `?<name>`, where `name` is the name of the
+    /// sub-expression. This parser expects the `?` token to have already been consumed
+    pub fn parse_named_group(&mut self, span_start: Span) -> Result<Option<GroupKind>> {
+        match_tok!(TokenKind::OpenGroupName);
+        expect_tok!(TokenKind::Name(name), name_span, "group name");
+        expect_tok!(TokenKind::CloseGroupName, "end of group name `>`");
+
+        let expr = self.parse_expr()?;
+        let name = StringSpan { span: name_span, value: name };
+
+        match_tok!(TokenKind::CloseGroupName);
+
+        Ok(Some(GroupKind::Named(NamedGroup {
+            name,
+            span: Span::wrap(&span_start, &expr.span),
+            expr: Box::new(expr),
+        })))
+    }
+
     /// Parse a non-capturing group.
     ///
-    /// A non-capturing group begins with `:?` ([`TokenKind::NonCapturing`])
-    pub fn parse_non_capturing_group(&mut self) -> Result<Option<GroupKind>> {
-        match_tok!(self.input; _, TokenKind::NonCapturing);
+    /// A non-capturing group is not represented by a name or index; it optionally matches some
+    /// text and optionally specifies some flags.
+    ///
+    /// This parser expects the `?` token to have already been consumed
+    ///
+    /// # Grammar
+    ///
+    /// ```grammar
+    /// group_contents ->
+    ///     | '?' flags? ':' expr
+    ///     | '?' flags
+    /// ```
+    pub fn parse_non_capturing_group(&mut self, span_start: Span) -> Result<Option<GroupKind>> {
         let expr = self.parse_expr()?;
 
         Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
-            span:  expr.span,
+            span: expr.span,
             flags: None,
-            expr:  Box::new(expr),
+            expr: Box::new(expr),
         })))
+    }
+
+    pub fn parse_flags(&mut self) -> Result<Option<Flags>> {
+        let mut set_flags = vec![];
+        let mut clear_flags = vec![];
+        let mut clearing = false;
+
+        loop {
+            let matched = try_match_tok!(TokenKind::is_flag_or_delimiter, |kind, span| {
+
+            });
+
+            if !matched {
+                break;
+            }
+        }
+
+        todo!()
     }
 
     /// Parse a non-capturing group with flags
@@ -595,7 +645,7 @@ impl<'a> Parser<'a> {
     ///
     /// Together, the `?ix-um:` is a [`TokenKind::NonCapturingFlags`]
     pub fn parse_non_capturing_flags_group(&mut self) -> Result<Option<GroupKind>> {
-        match_tok!(self.input; span, TokenKind::NonCapturingFlags(set_flags, clear_flags));
+        match_tok!(TokenKind::NonCapturingFlags(set_flags, clear_flags), span);
         let expr = self.parse_expr()?;
 
         // reinterpret the flag characters to AST flags
@@ -603,32 +653,12 @@ impl<'a> Parser<'a> {
         let clear_flags = self.parse_flags(clear_flags)?;
 
         Ok(Some(GroupKind::NonCapturing(NonCapturingGroup {
-            span:  Span::wrap(&span, &expr.span),
+            span: Span::wrap(&span, &expr.span),
             flags: Some(Flags {
                 span,
                 set_flags,
                 clear_flags,
             }),
-            expr:  Box::new(expr),
-        })))
-    }
-
-    /// Parse a named group
-    ///
-    /// Named groups are capturing groups, but instead of being identified by a
-    /// number, are identified with a string.
-    ///
-    /// Named groups begin with `?P<name>`, where `name` is the name of the
-    /// sub-expression
-    pub fn parse_named_group(&mut self) -> Result<Option<GroupKind>> {
-        match_tok!(self.input; span, TokenKind::Name(name));
-        let expr = self.parse_expr()?;
-
-        let name = StringSpan { span, value: name };
-
-        Ok(Some(GroupKind::Named(NamedGroup {
-            span: Span::wrap(&span, &expr.span),
-            name,
             expr: Box::new(expr),
         })))
     }
@@ -663,7 +693,7 @@ impl<'a> Parser<'a> {
     ///
     /// Together, the `?ix-um` is a [`TokenKind::Flags`]
     pub fn parse_flag_group(&mut self) -> Result<Option<GroupKind>> {
-        match_tok!(self.input; span, TokenKind::Flags(set_flags, clear_flags));
+        match_tok!(TokenKind::Flags(set_flags, clear_flags), span);
 
         // reinterpret the flag characters as AST flags
         let set_flags = self.parse_flags(set_flags)?;
@@ -753,12 +783,7 @@ impl<'a> Parser<'a> {
     ///     | \e
     /// ```
     pub fn parse_class(&mut self) -> Result<Option<Expr>> {
-        let res = parse_alts![
-            { self.parse_specified_class() }
-            { self.parse_unicode_class() }
-        ];
-
-        Ok(res)
+        self.parse_alts(vec![Self::parse_specified_class, Self::parse_unicode_class])
     }
 
     /// Parse a unicode character class
@@ -787,12 +812,10 @@ impl<'a> Parser<'a> {
     ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
     /// ```
     pub fn parse_unicode_class(&mut self) -> Result<Option<Expr>> {
-        let res = parse_alts![
-            { self.parse_unicode_short_class() }
-            { self.parse_unicode_long_class() }
-        ];
-
-        Ok(res)
+        self.parse_alts(vec![
+            Self::parse_unicode_short_class,
+            Self::parse_unicode_long_class,
+        ])
     }
 
     /// Parse a short-form unicode character class
@@ -806,7 +829,7 @@ impl<'a> Parser<'a> {
     ///     | UNICODE_SHORT
     /// ```
     pub fn parse_unicode_short_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span, TokenKind::UnicodeShort(category, negated));
+        match_tok!(TokenKind::UnicodeShort(category, negated), span);
 
         // create a unicode class for the general category specified by the token
         let unicode_class = UnicodeClass {
@@ -843,14 +866,13 @@ impl<'a> Parser<'a> {
     ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
     /// ```
     pub fn parse_unicode_long_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span_begin, TokenKind::UnicodeLongStart(negated));
+        match_tok!(TokenKind::UnicodeLongStart(negated), span_begin);
 
         let mut negated = negated;
         let mut name: Option<StringSpan> = None;
         let mut value: Option<StringSpan> = None;
 
         match_one!(self.input; [
-
             // for the form `\p{Value}`
             (TokenKind::UnicodePropValue(v), |span| {
                 value = Some(StringSpan { span, value: v });
@@ -879,7 +901,7 @@ impl<'a> Parser<'a> {
             }),
         ]);
 
-        match_tok!(self.input; span_end, TokenKind::UnicodeLongEnd);
+        match_tok!(TokenKind::UnicodeLongEnd, span_end);
 
         // construct the unicode class with the name and value collected from
         // UnicodePropValue and (optionally) UnicodePropName tokens
@@ -943,10 +965,10 @@ impl<'a> Parser<'a> {
     ///     | '&&' spec_item spec_set?
     /// ```
     pub fn parse_specified_class(&mut self) -> Result<Option<Expr>> {
-        match_tok!(self.input; span_start, TokenKind::OpenBracket);
+        match_tok!(TokenKind::OpenBracket, span_start);
 
         // optionally match a negation token for the class
-        let negated = matches_tok!(self.input; TokenKind::Negated);
+        let negated = matches_tok!(TokenKind::Negated);
 
         // match all specification items
         let mut items = Vec::new();
@@ -954,7 +976,7 @@ impl<'a> Parser<'a> {
             items.push(item);
         }
 
-        expect_tok!(self.input, "end of character class `]`"; span_end, TokenKind::CloseBracket);
+        expect_tok!(TokenKind::CloseBracket, span_end, "end of character class `]`");
 
         let span = Span::wrap(&span_start, &span_end);
         let inner_span_start = items
@@ -968,12 +990,12 @@ impl<'a> Parser<'a> {
         let inner_span = Span::new(inner_span_start, inner_span_end);
 
         let kind = ClassKind::Specified(SpecifiedClass {
-            span:  inner_span,
-            items: items,
+            items,
+            span: inner_span,
         });
 
         Ok(Some(Expr {
-            span: span,
+            span,
             kind: ExprKind::Class(Class {
                 span,
                 negated,
@@ -1043,15 +1065,13 @@ impl<'a> Parser<'a> {
     ///
     /// [1]: crate::parse::Parser::parse_specified_class
     pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
-        let res = parse_alts![
-            { self.parse_class_term_literal() }
-            { self.parse_class_term_digit() }
-            { self.parse_class_term_whitespace() }
-            { self.parse_class_term_word() }
-            { self.parse_class_term_bracket() }
-        ];
-
-        Ok(res)
+        self.parse_alts(vec![
+            Self::parse_class_term_literal,
+            Self::parse_class_term_digit,
+            Self::parse_class_term_whitespace,
+            Self::parse_class_term_word,
+            Self::parse_class_term_bracket,
+        ])
     }
 
     /// Parse a character class item beginning with a literal
@@ -1067,12 +1087,12 @@ impl<'a> Parser<'a> {
     pub fn parse_class_term_literal(&mut self) -> Result<Option<ClassSpec>> {
         // match a literal, which will either be on its own or at the start
         // of a literal range
-        match_tok!(self.input; span_start, TokenKind::Literal(c_start));
+        match_tok!(TokenKind::Literal(c_start), span_start);
 
         // optionally match the second half of a range
         let mut spec: Option<ClassSpec> = None;
-        let matched_range = matches_tok!(self.input; TokenKind::Range, |span_end| {
-            expect_tok!(self.input, "end of range"; span_end, TokenKind::Literal(c_end));
+        let matched_range = try_match_tok!(|TokenKind::Range, span_end| {
+            expect_tok!(TokenKind::Literal(c_end), span_end, "end of range");
 
             // if a range is matched, a range class specifier will be returned
             let span = Span::wrap(&span_start, &span_end);
@@ -1098,7 +1118,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a digit short class, `\d` or `\D`
     pub fn parse_class_term_digit(&mut self) -> Result<Option<ClassSpec>> {
-        match_tok!(self.input; span, TokenKind::Digit(negated));
+        match_tok!(TokenKind::Digit(negated), span);
 
         Ok(Some(ClassSpec {
             span,
@@ -1108,7 +1128,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a whitespace short class, `\s` or `\S`
     pub fn parse_class_term_whitespace(&mut self) -> Result<Option<ClassSpec>> {
-        match_tok!(self.input; span, TokenKind::Whitespace(negated));
+        match_tok!(TokenKind::Whitespace(negated), span);
 
         Ok(Some(ClassSpec {
             span,
@@ -1118,7 +1138,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a word char short class, `\w` or `\W`
     pub fn parse_class_term_word(&mut self) -> Result<Option<ClassSpec>> {
-        match_tok!(self.input; span, TokenKind::WordChar(negated));
+        match_tok!(TokenKind::WordChar(negated), span);
 
         Ok(Some(ClassSpec {
             span,
@@ -1148,14 +1168,14 @@ impl<'a> Parser<'a> {
     ///
     /// [1]: crate::parse::Parser::parse_specified_class
     pub fn parse_class_term_bracket(&mut self) -> Result<Option<ClassSpec>> {
-        match_tok!(self.input; span_start, TokenKind::OpenBracket);
+        match_tok!(TokenKind::OpenBracket, span_start);
 
         let mut kind: Option<ClassSpecKind> = None;
         let mut span: Option<Span> = None;
 
         // attempt to match a POSIX class name
-        let matched = matches_tok!(self.input; TokenKind::ClassName(name, negated), |_| {
-            expect_tok!(self.input, "end of posix class `]`"; span_end, TokenKind::CloseBracket);
+        let matched = try_match_tok!(|TokenKind::ClassName(name, negated)| {
+            expect_tok!(TokenKind::CloseBracket, span_end, "end of posix class `]`");
 
             // convert the matched name into a POSIX class item
             let posix_kind = match PosixKind::try_from(name.as_ref()) {
@@ -1173,7 +1193,7 @@ impl<'a> Parser<'a> {
 
         // if a POSIX class wasn't matched, then this must be the beginning of a subclass.
         if !matched {
-            let negated = matches_tok!(self.input; TokenKind::Negated);
+            let negated = matches_tok!(TokenKind::Negated);
 
             // match subclass items
             let mut items = Vec::new();
@@ -1181,7 +1201,7 @@ impl<'a> Parser<'a> {
                 items.push(item);
             }
 
-            expect_tok!(self.input, "end of character class `]`"; span_end, TokenKind::CloseBracket);
+            expect_tok!(TokenKind::CloseBracket, span_end, "end of character class `]`");
 
             let inner_span_start = items
                 .first()
@@ -1194,7 +1214,7 @@ impl<'a> Parser<'a> {
             let inner_span = Span::new(inner_span_start, inner_span_end);
             let kind_span = Span::wrap(&span_start, &span_end);
             let class_kind = ClassKind::Specified(SpecifiedClass {
-                span:  inner_span,
+                span: inner_span,
                 items: items,
             });
 
@@ -1299,21 +1319,21 @@ impl<'a> Parser<'a> {
         let nested_set = self.parse_class_item_set(ClassSpec { span, kind })?;
         Ok(nested_set)
     }
-}
 
-macro_rules! parse_alts {
-    ( $parser:block ) => {{
-        (|| $parser)()?
-    }};
-    ( $parser:block $($parser_more:block)* ) => {{
-        match (|| $parser)()? {
-            res @ Some(_) => res,
-            None => parse_alts![ $($parser_more)+ ]
+    fn parse_alts<F, R>(&mut self, alts: Vec<F>) -> Result<Option<R>>
+    where
+        F: FnMut(&mut Self) -> Result<Option<R>>,
+    {
+        for alt in alts {
+            match alt(self) {
+                Ok(None) => continue,
+                result => return result,
+            }
         }
-    }};
-}
 
-use parse_alts;
+        Ok(None)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1681,15 +1701,23 @@ mod tests {
             TokenKind::Literal('b'),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
-            TokenKind::NonCapturing,
+            TokenKind::OpenGroupOptions,
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('c'),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
-            TokenKind::NonCapturingFlags(vec!['i'], vec!['x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('d'),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['i'], vec!['x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::Literal('e'),
         ]));
@@ -1725,7 +1753,9 @@ mod tests {
     fn group_errors() {
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenGroup,
-            TokenKind::Flags(vec!['i'], vec![]),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
         ]));
@@ -1771,7 +1801,8 @@ mod tests {
     #[test]
     fn non_capturing() {
         let mut p = Parser::new(token_iter(vec![
-            TokenKind::NonCapturing,
+            TokenKind::OpenGroupOptions,
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::Literal('c'),
@@ -1792,7 +1823,10 @@ mod tests {
     #[test]
     fn non_capturing_flags() {
         let mut p = Parser::new(token_iter(vec![
-            TokenKind::NonCapturingFlags(vec!['i'], vec!['x']),
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::Literal('c'),
@@ -1841,10 +1875,13 @@ mod tests {
 
     #[test]
     fn flag_group() {
-        let mut p = Parser::new(token_iter(vec![TokenKind::Flags(
-            vec!['i', 'x'],
-            vec!['m', 'U'],
-        )]));
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::MultiLine),
+            TokenKind::Flag(Flag::SwapGreed),
+        ]));
 
         let Ok(Some(kind)) = p.parse_flag_group() else {
             panic!("parse failed");

@@ -5,7 +5,7 @@ pub mod token;
 pub mod tokenizer;
 
 pub use error::{Error, ErrorKind, Result};
-pub use token::{Token, TokenKind};
+pub use token::{Flag, Token, TokenKind};
 pub use tokenizer::Tokenizer;
 
 #[cfg(test)]
