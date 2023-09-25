@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use aglet_text::Span;
 
 use crate::parse::error::TokenConvertError;
-use crate::tokenize::TokenKind;
+use crate::tokenize::{self, TokenKind};
 
 #[derive(Default)]
 pub struct Ast {
@@ -151,23 +151,23 @@ pub enum FlagKind {
     CaseInsensitive,
     MultiLine,
     DotMatchesNewline,
+    CRLFMode,
     SwapGreed,
     Unicode,
     IgnoreWhitespace,
 }
 
-impl TryFrom<char> for FlagKind {
-    type Error = TokenConvertError;
+impl From<tokenize::Flag> for FlagKind {
 
-    fn try_from(value: char) -> Result<Self, Self::Error> {
+    fn from(value: tokenize::Flag) -> Self {
         match value {
-            'i' => Ok(Self::CaseInsensitive),
-            'm' => Ok(Self::MultiLine),
-            's' => Ok(Self::DotMatchesNewline),
-            'U' => Ok(Self::SwapGreed),
-            'u' => Ok(Self::Unicode),
-            'x' => Ok(Self::IgnoreWhitespace),
-            _ => Err(TokenConvertError::InvalidFlag(value)),
+            tokenize::Flag::CaseInsensitive => Self::CaseInsensitive,
+            tokenize::Flag::MultiLine => Self::MultiLine,
+            tokenize::Flag::DotMatchesNewline => Self::DotMatchesNewline,
+            tokenize::Flag::CRLFMode => Self::CRLFMode,
+            tokenize::Flag::SwapGreed => Self::SwapGreed,
+            tokenize::Flag::Unicode => Self::Unicode,
+            tokenize::Flag::IgnoreWhitespace => Self::IgnoreWhitespace,
         }
     }
 }
@@ -233,6 +233,7 @@ pub struct Symmetrical {
 pub struct PosixClass {
     pub span: Span,
     pub kind: PosixKind,
+    pub negated: bool,
 }
 
 #[derive(Debug)]

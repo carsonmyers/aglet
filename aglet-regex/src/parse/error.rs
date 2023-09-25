@@ -63,7 +63,4 @@ pub enum TokenConvertError {
 
     #[error("invalid posix class: {0}")]
     InvalidPosixClass(String),
-
-    #[error("invalid flag: {0}")]
-    InvalidFlag(char),
 }

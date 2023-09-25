@@ -233,7 +233,7 @@ pub enum TokenKind {
     UnicodeLongEnd,
 
     /// Property name for a long unicode class specifier, appearing on the left side of
-    /// the equal (or inequal) sign if present (e.g. `\u{Script=Greek}`)
+    /// the equal (or unequal) sign if present (e.g. `\u{Script=Greek}`)
     ///
     /// # Items
     ///
@@ -249,7 +249,7 @@ pub enum TokenKind {
     UnicodeEqual(bool),
 
     /// Property value for a long unicode class specifier, appearing on the right side
-    /// of the equal (or inequal) sign if present, or as the only token within the
+    /// of the equal (or unequal) sign if present, or as the only token within the
     /// start- and end-tokens (e.g. `\u{sc=Greek}`).
     ///
     /// # Items
@@ -274,18 +274,67 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
+    #[inline]
     pub fn is_literal(&self) -> bool {
         matches!(self, TokenKind::Literal(_))
     }
 
-    pub fn is_any(&self) -> bool {
+    #[inline]
+    pub fn is_digit(&self) -> bool {
+        matches!(self, TokenKind::Digit(_))
+    }
+
+    #[inline]
+    pub fn is_whitespace(&self) -> bool {
+        matches!(self, TokenKind::Whitespace(_))
+    }
+
+    #[inline]
+    pub fn is_word_char(&self) -> bool {
+        matches!(self, TokenKind::WordChar(_))
+    }
+
+    #[inline]
+    pub fn is_dot(&self) -> bool {
         matches!(self, TokenKind::Dot)
     }
 
+    #[inline]
     pub fn is_alternate(&self) -> bool {
         matches!(self, TokenKind::Alternate)
     }
 
+    #[inline]
+    pub fn is_start_of_line(&self) -> bool {
+        matches!(self, TokenKind::StartOfLine)
+    }
+
+    #[inline]
+    pub fn is_end_of_line(&self) -> bool {
+        matches!(self, TokenKind::EndOfLine)
+    }
+
+    #[inline]
+    pub fn is_start_of_text(&self) -> bool {
+        matches!(self, TokenKind::StartOfText)
+    }
+
+    #[inline]
+    pub fn is_end_of_text(&self) -> bool {
+        matches!(self, TokenKind::EndOfText)
+    }
+
+    #[inline]
+    pub fn is_word_boundary(&self) -> bool {
+        matches!(self, TokenKind::WordBoundary)
+    }
+
+    #[inline]
+    pub fn is_non_word_boundary(&self) -> bool {
+        matches!(self, TokenKind::NonWordBoundary)
+    }
+
+    #[inline]
     pub fn is_boundary(&self) -> bool {
         match self {
             TokenKind::StartOfLine
@@ -298,36 +347,174 @@ impl TokenKind {
         }
     }
 
+    #[inline]
+    pub fn is_open_brace(&self) -> bool {
+        matches!(self, TokenKind::OpenBrace)
+    }
+
+    #[inline]
+    pub fn is_close_brace(&self) -> bool {
+        matches!(self, TokenKind::CloseBrace)
+    }
+
+    #[inline]
+    pub fn is_number(&self) -> bool {
+        matches!(self, TokenKind::Number(_))
+    }
+
+    #[inline]
+    pub fn is_comma(&self) -> bool {
+        matches!(self, TokenKind::Comma)
+    }
+
+    #[inline]
+    pub fn is_question(&self) -> bool {
+        matches!(self, TokenKind::Question)
+    }
+
+    #[inline]
+    pub fn is_star(&self) -> bool {
+        matches!(self, TokenKind::Star)
+    }
+
+    #[inline]
+    pub fn is_plus(&self) -> bool {
+        matches!(self, TokenKind::Plus)
+    }
+
+    #[inline]
+    pub fn is_open_group(&self) -> bool {
+        matches!(self, TokenKind::OpenGroup)
+    }
+
+    #[inline]
+    pub fn is_close_group(&self) -> bool {
+        matches!(self, TokenKind::CloseGroup)
+    }
+
+    #[inline]
+    pub fn is_open_group_options(&self) -> bool {
+        matches!(self, TokenKind::OpenGroupOptions)
+    }
+
+    #[inline]
+    pub fn is_close_group_options(&self) -> bool {
+        matches!(self, TokenKind::CloseGroupOptions)
+    }
+
+    #[inline]
+    pub fn is_open_group_name(&self) -> bool {
+        matches!(self, TokenKind::OpenGroupName)
+    }
+
+    #[inline]
+    pub fn is_close_group_name(&self) -> bool {
+        matches!(self, TokenKind::CloseGroupName)
+    }
+
+    #[inline]
+    pub fn is_name(&self) -> bool {
+        matches!(self, TokenKind::Name(_))
+    }
+
+    #[inline]
     pub fn is_flag(&self) -> bool {
         matches!(self, TokenKind::Flag(_))
     }
 
+    #[inline]
     pub fn is_flag_delimiter(&self) -> bool {
         matches!(self, TokenKind::FlagDelimiter)
     }
 
+    #[inline]
     pub fn is_flag_or_delimiter(&self) -> bool {
         self.is_flag() || self.is_flag_delimiter()
     }
 
+    #[inline]
+    pub fn is_open_bracket(&self) -> bool {
+        matches!(self, TokenKind::OpenBracket)
+    }
+
+    #[inline]
+    pub fn is_close_bracket(&self) -> bool {
+        matches!(self, TokenKind::CloseBracket)
+    }
+
+    #[inline]
+    pub fn is_negated(&self) -> bool {
+        matches!(self, TokenKind::Negated)
+    }
+
+    #[inline]
     pub fn is_range(&self) -> bool {
         matches!(self, TokenKind::Range)
     }
 
+    #[inline]
     pub fn is_symmetrical(&self) -> bool {
         matches!(self, TokenKind::Symmetrical)
     }
 
+    #[inline]
     pub fn is_difference(&self) -> bool {
         matches!(self, TokenKind::Difference)
     }
 
+    #[inline]
     pub fn is_intersection(&self) -> bool {
         matches!(self, TokenKind::Intersection)
     }
 
+    #[inline]
+    pub fn is_set_operator(&self) -> bool {
+        match self {
+            TokenKind::Symmetrical
+            | TokenKind::Difference
+            | TokenKind::Intersection => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_unicode_short(&self) -> bool {
+        matches!(self, TokenKind::UnicodeShort(_, _))
+    }
+
+    #[inline]
+    pub fn is_unicode_long_start(&self) -> bool {
+        matches!(self, TokenKind::UnicodeLongStart(_))
+    }
+
+    #[inline]
+    pub fn is_unicode_long_end(&self) -> bool {
+        matches!(self, TokenKind::UnicodeLongEnd)
+    }
+
+    #[inline]
+    pub fn is_unicode_prop_name(&self) -> bool {
+        matches!(self, TokenKind::UnicodePropName(_))
+    }
+
+    #[inline]
+    pub fn is_unicode_equal(&self) -> bool {
+        matches!(self, TokenKind::UnicodeEqual(_))
+    }
+
+    #[inline]
+    pub fn is_unicode_prop_value(&self) -> bool {
+        matches!(self, TokenKind::UnicodePropValue(_))
+    }
+
+    #[inline]
     pub fn is_class_name(&self) -> bool {
         matches!(self, TokenKind::ClassName(_, _))
+    }
+
+    #[inline]
+    pub fn is_error(&self) -> bool {
+        matches!(self, TokenKind::Error(_))
     }
 }
 
