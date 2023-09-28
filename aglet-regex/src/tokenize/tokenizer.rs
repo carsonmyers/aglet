@@ -160,11 +160,11 @@ impl<'a> Tokenizer<'a> {
             // case enter the `Group` state to tokenize it before optionally returning to the
             // `Main` state.
             Some('(') if matches!(self.cursor.first(), Some('?')) => {
-                self.state.push(State::Group);
+                self.push_state(State::Group);
                 self.tok_kind(TokenKind::OpenGroup)
             },
             Some('(') => {
-                self.state.push(State::Main);
+                self.push_state(State::Main);
                 self.tok_kind(TokenKind::OpenGroup)
             },
 
@@ -179,7 +179,7 @@ impl<'a> Tokenizer<'a> {
 
             // The `[` token pushes the character class state, e.g. `[a-z]`
             Some('[') => {
-                self.state.push(State::Class);
+                self.push_state(State::Class);
                 self.tok_kind(TokenKind::OpenBracket)
             },
 
@@ -188,7 +188,7 @@ impl<'a> Tokenizer<'a> {
 
             // The `{` token pushes the range state, e.g. `{1,3}`
             Some('{') => {
-                self.state.push(State::Range);
+                self.push_state(State::Range);
                 self.tok_kind(TokenKind::OpenBrace)
             },
 
@@ -222,9 +222,7 @@ impl<'a> Tokenizer<'a> {
         match self.cursor.next() {
             Some('?') => self.tok_kind(TokenKind::OpenGroupOptions),
             Some(':') => {
-                self.state
-                    .swap(State::Main)
-                    .map_err(|e| self.err(ErrorKind::InternalStateError(e)))?;
+                self.swap_state(State::Main)?;
                 self.tok_kind(TokenKind::CloseGroupOptions)
             },
             Some('P') if matches!(self.cursor.first(), Some('<')) => {
@@ -233,14 +231,12 @@ impl<'a> Tokenizer<'a> {
             },
             Some('<') => self.tok_kind(TokenKind::OpenGroupName),
             Some('>') => {
-                self.state
-                    .swap(State::Main)
-                    .map_err(|e| self.err(ErrorKind::InternalStateError(e)))?;
+                self.swap_state(State::Main)?;
                 self.tok_kind(TokenKind::CloseGroupName)
             },
             Some('-') => {
                 {
-                    let flags = self.state.flags_mut()?;
+                    let flags = self.flags_mut()?;
                     flags.unset_flags = true;
                 }
 
@@ -248,33 +244,35 @@ impl<'a> Tokenizer<'a> {
             },
             Some(')') => {
                 let is_flag_group = match self.last_token_kind {
-                    Ok(TokenKind::Flag(_) | TokenKind::FlagDelimiter) => true,
+                    Some(TokenKind::Flag(_) | TokenKind::FlagDelimiter) => true,
                     _ => false,
                 };
 
                 if is_flag_group {
-                    let src_flags = self.state.flags()?;
-                    self.state.pop()?;
-                    let mut dst_flags = self.state.flags_mut()?;
+                    let ignore_space = self.flags()?.ignore_space;
+                    self.pop_state()?;
 
-                    dst_flags.ignore_space = src_flags.ignore_space;
+                    {
+                        let mut dst_flags = self.flags_mut()?;
+                        dst_flags.ignore_space = ignore_space;
+                    }
                 } else {
-                    self.state.pop()?;
+                    self.pop_state()?;
                 }
 
                 self.tok_kind(TokenKind::CloseGroup)
             },
             Some(c) if Flag::is_flag_char(c) => {
-                let flag = c.try_into().unwrap();
+                let flag: Flag = c.try_into().unwrap();
 
                 {
-                    let flags = self.state.flags_mut()?;
+                    let flags = self.flags_mut()?;
                     if flag.is_ignore_whitespace() {
                         flags.ignore_space = !flags.unset_flags;
                     }
                 }
 
-                self.tok_kind(TokenKind::Flag(c.try_into().unwrap()))
+                self.tok_kind(TokenKind::Flag(flag))
             },
             Some(c) if c.is_alphabetic() => self.err(ErrorKind::UnrecognizedFlag(c)),
             Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
@@ -317,12 +315,12 @@ impl<'a> Tokenizer<'a> {
             Some('-') => self.tok_kind(TokenKind::Literal('-')),
             // `[:` begins a named class, e.g. `[:alpha:]`
             Some('[') if matches!(self.cursor.first(), Some(':')) => {
-                self.state.push(State::ClassName);
+                self.push_state(State::ClassName);
                 self.tok_kind(TokenKind::OpenBracket)
             },
             // If not part of `[:`, `[` just begins a new sub-class
             Some('[') => {
-                self.state.push(State::Class);
+                self.push_state(State::Class);
                 self.tok_kind(TokenKind::OpenBracket)
             },
             // `]` ends a class name or a character class and pops its own state
@@ -536,6 +534,44 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    #[inline]
+    fn push_state(&mut self, state: State) {
+        self.state.push(state)
+    }
+
+    #[inline]
+    fn swap_state(&mut self, state: State) -> Result<State> {
+        self.state.swap(state).map_err(|err| {
+            let span = self.cursor.span();
+            Error {
+                span,
+                kind: ErrorKind::InternalStateError(err),
+            }
+        })
+    }
+
+    #[inline]
+    fn pop_state(&mut self) -> Result<State> {
+        self.state.pop().map_err(|err| {
+            let span = self.cursor.span();
+            Error {
+                span,
+                kind: ErrorKind::InternalStateError(err),
+            }
+        })
+    }
+
+    #[inline]
+    fn pop_all_states(&mut self) -> Result<()> {
+        self.state.pop_all().map_err(|err| {
+            let span = self.cursor.span();
+            Error {
+                span,
+                kind: ErrorKind::InternalStateError(err),
+            }
+        })
+    }
+
     /// Get an immutable copy of the state flags
     fn flags(&mut self) -> Result<&Flags> {
         let span = self.cursor.span();
@@ -706,7 +742,7 @@ impl<'a> Tokenizer<'a> {
     fn parse_unicode(&mut self, negated: bool) -> Result<Token> {
         // Check for a braced expression and enter the `UnicodeProperties` state
         if self.cursor.matches('{') {
-            self.state.push(State::UnicodeProperties);
+            self.push_state(State::UnicodeProperties);
             return self.tok_kind(TokenKind::UnicodeLongStart(negated));
         }
 
@@ -748,9 +784,7 @@ impl<'a> Tokenizer<'a> {
         }
 
         // The `Group` state ends when a group name is matched
-        self.state
-            .pop()
-            .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
+        self.pop_state()?;
 
         self.tok_kind(TokenKind::Name(name))
     }
@@ -808,10 +842,7 @@ impl<'a> Tokenizer<'a> {
                     return self.err(ErrorKind::UnexpectedChar(c));
                 },
                 None => {
-                    self.state
-                        .pop_all()
-                        .map_err(|err| self.raw_err(ErrorKind::InternalStateError(err)))?;
-
+                    self.pop_all_states()?;
                     return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of range `}`",
                     )));
@@ -859,10 +890,12 @@ impl<'a> Tokenizer<'a> {
         Ok(self.cursor.map_span(|span| Token { span, kind }))
     }
 
+    #[inline]
     fn err<T>(&mut self, kind: ErrorKind) -> Result<T> {
         Err(self.raw_err(kind))
     }
 
+    #[inline]
     fn raw_err(&mut self, kind: ErrorKind) -> Error {
         self.cursor.map_span(|span| Error { span, kind })
     }

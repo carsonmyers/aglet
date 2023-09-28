@@ -6,6 +6,7 @@ use crate::parse::ast::*;
 use crate::parse::error::*;
 use crate::parse::input::Input;
 use crate::tokenize::{self, Flag, Token, TokenKind};
+use crate::tokenize::token::tok;
 
 /// Parse regular expressions from a [token stream](tokenize::Tokenizer)
 ///
@@ -341,14 +342,14 @@ impl<'a> Parser<'a> {
 
         // first number
         if let Some(tok) = self.input.match_where(TokenKind::is_number)? {
-            let TokenKind::Number(number) = tok.kind;
+            tok!(TokenKind::Number(number) = tok);
             start = Some(number);
         }
 
         // the second number is only allowed if a comma is present
-        if let Some(_) = self.input.match_where(TokenKind::is_comma)? {
+        if self.input.match_where(TokenKind::is_comma)?.is_some() {
             if let Some(tok) = self.input.match_where(TokenKind::is_number)? {
-                let TokenKind::Number(number) = tok.kind;
+                tok!(TokenKind::Number(number) = tok);
                 end = Some(number);
             }
         }
@@ -386,14 +387,9 @@ impl<'a> Parser<'a> {
     pub fn parse_item(&mut self) -> Result<Option<Expr>> {
         match self.input.peek_kind() {
             Some(Ok(
-                | TokenKind::Star
-                | TokenKind::Plus
-                | TokenKind::Question
-                | TokenKind::OpenBrace,
-            )) => {
-                Err(self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal"))
-            },
-            _ => Ok(())
+                TokenKind::Star | TokenKind::Plus | TokenKind::Question | TokenKind::OpenBrace,
+            )) => Err(self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal")),
+            _ => Ok(()),
         }?;
 
         self.parse_alts(vec![
@@ -426,7 +422,7 @@ impl<'a> Parser<'a> {
             return Ok(None)
         };
 
-        let TokenKind::Literal(c) = tok.kind;
+        tok!(TokenKind::Literal(c) = tok);
         Ok(Some(Expr {
             span: tok.span,
             kind: ExprKind::Literal(c),
@@ -439,7 +435,7 @@ impl<'a> Parser<'a> {
             return Ok(None)
         };
 
-        let TokenKind::Digit(negated) = tok.kind;
+        tok!(TokenKind::Digit(negated) = tok);
         Ok(Some(Expr {
             span: tok.span,
             kind: ExprKind::Digit(negated),
@@ -452,7 +448,7 @@ impl<'a> Parser<'a> {
             return Ok(None)
         };
 
-        let TokenKind::Whitespace(negated) = tok.kind;
+        tok!(TokenKind::Whitespace(negated) = tok);
         Ok(Some(Expr {
             span: tok.span,
             kind: ExprKind::Whitespace(negated),
@@ -465,7 +461,7 @@ impl<'a> Parser<'a> {
             return Ok(None)
         };
 
-        let TokenKind::WordChar(negated) = tok.kind;
+        tok!(TokenKind::WordChar(negated) = tok);
         Ok(Some(Expr {
             span: tok.span,
             kind: ExprKind::WordChar(negated),
@@ -488,7 +484,10 @@ impl<'a> Parser<'a> {
 
         Ok(Some(Expr {
             span: tok.span,
-            kind: ExprKind::Boundary(Boundary { span: tok.span, kind }),
+            kind: ExprKind::Boundary(Boundary {
+                span: tok.span,
+                kind,
+            }),
         }))
     }
 
@@ -569,18 +568,67 @@ impl<'a> Parser<'a> {
         Ok(res)
     }
 
+    /// Parse a group with an options header
+    ///
+    /// An options header begins with `?` and is used to specify a name or set of flags for the
+    /// group.
+    ///
+    /// Named groups are capturing groups, but instead of being identified by a
+    /// number, are also identified with a string. They begin with `?P<name>` or `?<name>`, where
+    /// `name` is the name of the sub-expression.
+    ///
+    /// A non-capturing group is not represented by a name or index; it optionally matches some
+    /// text and optionally specifies some flags. The flags set or cleared in a non-capturing
+    /// group only apply within that group.
+    ///
+    /// A flags group only specifies some flags and matches no text; flags set or cleared in a
+    /// flags group apply to their enclosing expression.
+    ///
+    /// Available flags are:
+    ///
+    /// * `i`: case-insensitive
+    /// * `m`: multi-line
+    /// * `s`: `.` matches newlines
+    /// * `R`: use `\r\n` when multiline mode is enabled
+    /// * `U`: swaps the meaning of `.*` and `.*?`
+    /// * `u`: enable unicode support (default)
+    /// * `x`: ignore whitespace and allow comments
+    ///
+    /// Flags are set or cleared like so:
+    ///
+    /// `ix-um`
+    ///
+    /// * Set the case-insensitive flag `i`
+    /// * Set the ignore-whitespace flag `x`
+    /// * Clear the unicode support flag `u`
+    /// * Clear the multi-line flag `m`
+    ///
+    /// ```grammar
+    /// group_contents ->
+    ///     | '?' flags? ':' expr
+    ///     | '?' flags
+    ///     | '?' 'P'? '<' GROUP_NAME '>' expr
+    /// ```
     pub fn parse_group_with_header(&mut self) -> Result<Option<GroupKind>> {
         let Some(open_tok) = self.input.match_where(TokenKind::is_open_group_options)? else {
             return Ok(None);
         };
 
-        let group_kind = if self.input.match_where(TokenKind::is_open_group_name)?.is_some() {
+        let group_kind = if self
+            .input
+            .match_where(TokenKind::is_open_group_name)?
+            .is_some()
+        {
             let name_tok = self.expect_match("group name", TokenKind::is_name)?;
+            tok!(TokenKind::Name(name) = name_tok);
+
             self.expect_match("end of group name `>`", TokenKind::is_close_group_name)?;
 
             let expr = self.parse_expr()?;
-            let TokenKind::Name(n) = name_tok.kind;
-            let name = StringSpan { span: name_tok.span, value: n };
+            let name = StringSpan {
+                span: name_tok.span,
+                value: name,
+            };
 
             GroupKind::Named(NamedGroup {
                 name,
@@ -589,7 +637,11 @@ impl<'a> Parser<'a> {
             })
         } else {
             let flags = self.parse_flags()?;
-            if self.input.match_where(TokenKind::is_close_group_options)?.is_some() {
+            if self
+                .input
+                .match_where(TokenKind::is_close_group_options)?
+                .is_some()
+            {
                 let expr = self.parse_expr()?;
 
                 GroupKind::NonCapturing(NonCapturingGroup {
@@ -604,44 +656,11 @@ impl<'a> Parser<'a> {
                     clear_flags: Vec::new(),
                 });
 
-                GroupKind::Flags(FlagGroup {
-                    flags,
-                })
+                GroupKind::Flags(FlagGroup { flags })
             }
         };
 
         Ok(Some(group_kind))
-    }
-
-    /// Parse a named group
-    ///
-    /// Named groups are capturing groups, but instead of being identified by a
-    /// number, are also identified with a string.
-    ///
-    /// Named groups begin with `?P<name>` or `?<name>`, where `name` is the name of the
-    /// sub-expression. This parser expects the `?` token to have already been consumed
-    pub fn parse_named_group(&mut self) -> Result<Option<GroupKind>> {
-        // TODO: remove this but preserve the documentation (parse_group_with_header)
-        unimplemented!()
-    }
-
-    /// Parse a non-capturing group.
-    ///
-    /// A non-capturing group is not represented by a name or index; it optionally matches some
-    /// text and optionally specifies some flags.
-    ///
-    /// This parser expects the `?` token to have already been consumed
-    ///
-    /// # Grammar
-    ///
-    /// ```grammar
-    /// group_contents ->
-    ///     | '?' flags? ':' expr
-    ///     | '?' flags
-    /// ```
-    pub fn parse_non_capturing_group(&mut self) -> Result<Option<GroupKind>> {
-        // TODO: remove this but preserve the documentation (parse_group_with_header)
-        unimplemented!()
     }
 
     pub fn parse_flags(&mut self) -> Result<Option<Flags>> {
@@ -658,7 +677,8 @@ impl<'a> Parser<'a> {
             }
 
             if tok.kind.is_flag() {
-                let TokenKind::Flag(f) = tok.kind;
+                tok!(TokenKind::Flag(f) = tok);
+
                 if clearing {
                     clear_flags.push(f.into())
                 } else {
@@ -677,69 +697,6 @@ impl<'a> Parser<'a> {
             set_flags,
             clear_flags,
         }))
-    }
-
-    /// Parse a non-capturing group with flags
-    ///
-    /// Non-capturing groups with flags also begin with `:?`, but the flag specification
-    /// is between the `:` and `?`.
-    ///
-    /// Available flags are:
-    ///
-    /// * `i`: case-insensitive
-    /// * `m`: multi-line
-    /// * `s`: `.` matches newlines
-    /// * `U`: swaps the meaning of `.*` and `.*?`
-    /// * `u`: enable unicode support (default)
-    /// * `x`: ignore whitespace and allow comments
-    ///
-    /// Flags are set or cleared like so:
-    ///
-    /// `ix-um`
-    ///
-    /// * Set the case-insensitive flag `i`
-    /// * Set the ignore-whitespace flag `x`
-    /// * Clear the unicode support flag `u`
-    /// * Clear the multi-line flag `m`
-    ///
-    /// Together, the `?ix-um:` is a [`TokenKind::NonCapturingFlags`]
-    pub fn parse_non_capturing_flags_group(&mut self) -> Result<Option<GroupKind>> {
-        // TODO: remove this but preserve the documentation (parse_group_with_header)
-        unimplemented!()
-    }
-
-    /// Parse a flag group
-    ///
-    /// A flag group is similar to a non-capturing group with flags, however instead of
-    /// applying the effects of the flags to a sub-expression, they are applied to the
-    /// current expression. This group type does not match a sub-expression.
-    ///
-    /// Flag groups are specified the same way as non-capturing groups with flags,
-    /// but without the trailing `:` after the flags, and without the subexpression. E.g.:
-    /// `(?ix)`.
-    ///
-    /// Available flags are:
-    ///
-    /// * `i`: case-insensitive
-    /// * `m`: multi-line
-    /// * `s`: `.` matches newlines
-    /// * `U`: swaps the meaning of `.*` and `.*?`
-    /// * `u`: enable unicode support (default)
-    /// * `x`: ignore whitespace and allow comments
-    ///
-    /// Flags are set or cleared like so:
-    ///
-    /// `ix-um`
-    ///
-    /// * Set the case-insensitive flag `i`
-    /// * Set the ignore-whitespace flag `x`
-    /// * Clear the unicode support flag `u`
-    /// * Clear the multi-line flag `m`
-    ///
-    /// Together, the `?ix-um` is a [`TokenKind::Flags`]
-    pub fn parse_flag_group(&mut self) -> Result<Option<GroupKind>> {
-        // TODO: remove this but preserve the documentation (parse_group_with_header)
-        unimplemented!()
     }
 
     /// Parse a capturing group
@@ -855,7 +812,7 @@ impl<'a> Parser<'a> {
         };
 
         // create a unicode class for the general category specified by the token
-        let TokenKind::UnicodeShort(category, negated) = tok.kind;
+        tok!(TokenKind::UnicodeShort(category, negated) = tok);
         let unicode_class = UnicodeClass {
             span: tok.span,
             name: None,
@@ -894,18 +851,24 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let TokenKind::UnicodeLongStart(mut negated) = open_tok.kind;
+        tok!(TokenKind::UnicodeLongStart(mut negated) = open_tok);
         let mut name: Option<StringSpan> = None;
         let mut value: Option<StringSpan> = None;
 
         if let Some(val_tok) = self.input.match_where(TokenKind::is_unicode_prop_value)? {
             // for the form `\p{Value}`
-            let TokenKind::UnicodePropValue(v) = val_tok.kind;
-            value = Some(StringSpan { span: val_tok.span, value: v })
+            tok!(TokenKind::UnicodePropValue(v) = val_tok);
+            value = Some(StringSpan {
+                span: val_tok.span,
+                value: v,
+            })
         } else if let Some(name_tok) = self.input.match_where(TokenKind::is_unicode_prop_name)? {
             // for the form `\p{Name=Value}`
-            let TokenKind::UnicodePropName(n) = name_tok.kind;
-            name = Some(StringSpan { span: name_tok.span, value: n });
+            tok!(TokenKind::UnicodePropName(n) = name_tok);
+            name = Some(StringSpan {
+                span: name_tok.span,
+                value: n,
+            });
 
             // the long version of a unicode class can be double negated, e.g.:
             //
@@ -915,17 +878,24 @@ impl<'a> Parser<'a> {
             //
             // the resulting negation is the exclusive or (equivalent to NEQ) of both
             let eq_tok = self.expect_match("equal sign", TokenKind::is_unicode_equal)?;
-            let TokenKind::UnicodeEqual(eq_negated) = eq_tok.kind;
+            tok!(TokenKind::UnicodeEqual(eq_negated) = eq_tok);
             negated = negated != eq_negated;
 
-            let val_tok = self.expect_match("unicode property value", TokenKind::is_unicode_prop_value)?;
-            let TokenKind::UnicodePropValue(v) = val_tok.kind;
-            value = Some(StringSpan { span: val_tok.span, value: v });
+            let val_tok =
+                self.expect_match("unicode property value", TokenKind::is_unicode_prop_value)?;
+            tok!(TokenKind::UnicodePropValue(v) = val_tok);
+            value = Some(StringSpan {
+                span: val_tok.span,
+                value: v,
+            });
         } else {
             self.expected("unicode property name or value")?;
         }
 
-        let close_tok = self.expect_match("unicode property closing brace `}`", TokenKind::is_unicode_long_end)?;
+        let close_tok = self.expect_match(
+            "unicode property closing brace `}`",
+            TokenKind::is_unicode_long_end,
+        )?;
 
         // construct the unicode class with the name and value collected from
         // UnicodePropValue and (optionally) UnicodePropName tokens
@@ -1002,7 +972,8 @@ impl<'a> Parser<'a> {
             items.push(item);
         }
 
-        let close_tok = self.expect_match("end of character class `]`", TokenKind::is_close_bracket)?;
+        let close_tok =
+            self.expect_match("end of character class `]`", TokenKind::is_close_bracket)?;
 
         let span = Span::wrap(&open_tok.span, &close_tok.span);
         let inner_span_start = items
@@ -1117,13 +1088,13 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let TokenKind::Literal(c_start) = start_tok.kind;
+        tok!(TokenKind::Literal(c_start) = start_tok);
 
         // optionally match the second half of a range
         let mut spec: Option<ClassSpec> = None;
         if self.input.match_where(TokenKind::is_range)?.is_some() {
             let end_tok = self.expect_match("end of range", TokenKind::is_literal)?;
-            let TokenKind::Literal(c_end) = end_tok.kind;
+            tok!(TokenKind::Literal(c_end) = end_tok);
 
             // if a range is matched, a range class specifier will be returned
             let span = Span::wrap(&start_tok.span, &end_tok.span);
@@ -1146,7 +1117,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let TokenKind::Digit(negated) = tok.kind;
+        tok!(TokenKind::Digit(negated) = tok);
         Ok(Some(ClassSpec {
             span: tok.span,
             kind: ClassSpecKind::Digit(negated),
@@ -1159,7 +1130,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let TokenKind::Digit(negated) = tok.kind;
+        tok!(TokenKind::Whitespace(negated) = tok);
         Ok(Some(ClassSpec {
             span: tok.span,
             kind: ClassSpecKind::Whitespace(negated),
@@ -1172,7 +1143,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let TokenKind::WordChar(negated) = tok.kind;
+        tok!(TokenKind::WordChar(negated) = tok);
         Ok(Some(ClassSpec {
             span: tok.span,
             kind: ClassSpecKind::WordChar(negated),
@@ -1210,8 +1181,9 @@ impl<'a> Parser<'a> {
 
         // attempt to match a POSIX class name
         if let Some(name_tok) = self.input.match_where(TokenKind::is_class_name)? {
-            let close_tok = self.expect_match("end of posix class `]`", TokenKind::is_close_bracket)?;
-            let TokenKind::ClassName(name, negated) = name_tok.kind;
+            let close_tok =
+                self.expect_match("end of posix class `]`", TokenKind::is_close_bracket)?;
+            tok!(TokenKind::ClassName(name, negated) = name_tok);
 
             // convert the matched name into a POSIX class item
             let posix_kind = match PosixKind::try_from(name.as_ref()) {
@@ -1236,7 +1208,8 @@ impl<'a> Parser<'a> {
                 items.push(item);
             }
 
-            let close_tok = self.expect_match("end of character class `]`", TokenKind::is_close_bracket)?;
+            let close_tok =
+                self.expect_match("end of character class `]`", TokenKind::is_close_bracket)?;
 
             let inner_span_start = items
                 .first()
@@ -1308,7 +1281,6 @@ impl<'a> Parser<'a> {
             return Ok(start);
         };
 
-
         // parse the right-hand side of the operation
         let Some(end) = self.parse_specified_class_term()? else {
             return Err(self.input.error(ErrorKind::UnexpectedToken(set_kind, "end of set".to_string())));
@@ -1339,11 +1311,11 @@ impl<'a> Parser<'a> {
         Ok(nested_set)
     }
 
-    fn parse_alts<F, R>(&mut self, alts: Vec<F>) -> Result<Option<R>>
+    fn parse_alts<F, R>(&mut self, mut alts: Vec<F>) -> Result<Option<R>>
     where
         F: FnMut(&mut Self) -> Result<Option<R>>,
     {
-        for alt in alts {
+        for mut alt in alts {
             match alt(self) {
                 Ok(None) => continue,
                 result => return result,
@@ -1355,35 +1327,41 @@ impl<'a> Parser<'a> {
 
     fn illegal_tok(&mut self, expect: &str) -> Error {
         match self.input.next() {
-            Some(Ok(tok)) => self.input.error(
-                ErrorKind::UnexpectedToken(
-                    tok.kind,
-                    expect.to_string()
-                )),
+            Some(Ok(tok)) => self
+                .input
+                .error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string())),
             Some(Err(err)) => err,
-            None => self.input.error(ErrorKind::UnexpectedEOF(
-                expect.to_string()
-            )),
+            None => self
+                .input
+                .error(ErrorKind::UnexpectedEOF(expect.to_string())),
         }
     }
 
     fn expect_match<F>(&mut self, expect: &str, f: F) -> Result<Token>
     where
-        F: Fn(&TokenKind) -> bool
+        F: Fn(&TokenKind) -> bool,
     {
         match self.input.next() {
             Some(Ok(tok)) if f(&tok.kind) => Ok(tok),
-            Some(Ok(tok)) => Err(self.input.error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string()))),
+            Some(Ok(tok)) => Err(self
+                .input
+                .error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string()))),
             Some(Err(err)) => Err(err),
-            None => Err(self.input.error(ErrorKind::UnexpectedEOF(expect.to_string()))),
+            None => Err(self
+                .input
+                .error(ErrorKind::UnexpectedEOF(expect.to_string()))),
         }
     }
 
     fn expected(&mut self, expect: &str) -> Result<Token> {
         match self.input.next() {
-            Some(Ok(tok)) => Err(self.input.error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string()))),
+            Some(Ok(tok)) => Err(self
+                .input
+                .error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string()))),
             Some(Err(err)) => Err(err),
-            None => Err(self.input.error(ErrorKind::UnexpectedEOF(expect.to_string()))),
+            None => Err(self
+                .input
+                .error(ErrorKind::UnexpectedEOF(expect.to_string()))),
         }
     }
 }
@@ -1531,6 +1509,7 @@ mod tests {
 
         let concat = get_concatenation(p.parse_concatenation());
         assert_eq!(concat.items.len(), 3);
+        println!("item: {}", stringify!(concat.items[0].kind));
         assert!(matches!(concat.items[0].kind, ExprKind::Literal('a')));
         assert!(matches!(concat.items[1].kind, ExprKind::Literal('b')));
         assert!(matches!(concat.items[2].kind, ExprKind::Group(_)));
@@ -1806,24 +1785,6 @@ mod tests {
     fn group_errors() {
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenGroup,
-            TokenKind::OpenGroupOptions,
-            TokenKind::Flag(Flag::CaseInsensitive),
-            TokenKind::CloseGroupOptions,
-            TokenKind::Literal('a'),
-            TokenKind::CloseGroup,
-        ]));
-
-        let res = p.parse_group();
-        assert!(matches!(
-            res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::Literal('a'), _),
-                ..
-            })
-        ));
-
-        let mut p = Parser::new(token_iter(vec![
-            TokenKind::OpenGroup,
             TokenKind::Literal('a'),
         ]));
 
@@ -1861,16 +1822,30 @@ mod tests {
             TokenKind::Literal('c'),
         ]));
 
-        let Ok(Some(kind)) = p.parse_non_capturing_group() else {
-            panic!("parse failed");
-        };
-        assert!(matches!(kind, GroupKind::NonCapturing(_)));
-
+        let kind = unwrap_parse(p.parse_group_with_header());
         let GroupKind::NonCapturing(NonCapturingGroup { flags, expr, .. }) = kind else {
             panic!("non a non-capturing group");
         };
+
         assert!(flags.is_none());
         assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
+
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::CloseGroupOptions,
+            TokenKind::Literal('a'),
+            TokenKind::Literal('b'),
+            TokenKind::Literal('c'),
+        ]));
+
+        let res = p.parse_group_with_header();
+        assert!(matches!(
+            res,
+            Err(Error {
+                kind: ErrorKind::UnexpectedToken(TokenKind::Literal('a'), ..),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1880,19 +1855,17 @@ mod tests {
             TokenKind::Flag(Flag::CaseInsensitive),
             TokenKind::FlagDelimiter,
             TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::Literal('c'),
         ]));
 
-        let Ok(Some(kind)) = p.parse_non_capturing_flags_group() else {
-            panic!("parse failed");
-        };
-        assert!(matches!(kind, GroupKind::NonCapturing(_)));
-
+        let kind = unwrap_parse(p.parse_group_with_header());
         let GroupKind::NonCapturing(NonCapturingGroup { flags, expr, .. }) = kind else {
             panic!("non a non-capturing group");
         };
+
         assert!(flags.is_some());
         assert_eq!(
             flags.as_ref().unwrap().set_flags,
@@ -1903,32 +1876,84 @@ mod tests {
             vec![FlagKind::IgnoreWhitespace]
         );
         assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
+
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::Literal('a'),
+            TokenKind::Literal('b'),
+            TokenKind::Literal('c'),
+        ]));
+
+        let res = p.parse_group_with_header();
+        assert!(matches!(
+            res,
+            Err(Error {
+                kind: ErrorKind::UnexpectedToken(TokenKind::Literal('a'), ..),
+                ..
+            })
+        ));
     }
 
     #[test]
     fn named_group() {
         let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::OpenGroupName,
             TokenKind::Name("name".to_string()),
+            TokenKind::CloseGroupName,
+            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::Literal('b'),
         ]));
 
-        let Ok(Some(kind)) = p.parse_named_group() else {
-            panic!("parse failed");
-        };
-        assert!(matches!(kind, GroupKind::Named(_)));
-
+        let kind = unwrap_parse(p.parse_group_with_header());
         let GroupKind::Named(NamedGroup { name, expr, .. }) = kind else {
             panic!("not a named group");
         };
+
         assert_eq!(name.value, "name".to_string());
         assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
+
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::OpenGroupName,
+            TokenKind::Name("name".to_string()),
+            TokenKind::CloseGroupOptions,
+        ]));
+
+        let res = p.parse_group_with_header();
+        assert!(matches!(
+            res,
+            Err(Error {
+                kind: ErrorKind::UnexpectedToken(TokenKind::CloseGroupOptions, ..),
+                ..
+            })
+        ));
+
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::OpenGroupName,
+            TokenKind::Name("name".to_string()),
+        ]));
+
+        let res = p.parse_group_with_header();
+        assert!(matches!(
+            res,
+            Err(Error {
+                kind: ErrorKind::UnexpectedEOF(_),
+                ..
+            })
+        ));
     }
 
     #[test]
     fn flag_group() {
         let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
             TokenKind::Flag(Flag::CaseInsensitive),
             TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::FlagDelimiter,
@@ -1936,11 +1961,7 @@ mod tests {
             TokenKind::Flag(Flag::SwapGreed),
         ]));
 
-        let Ok(Some(kind)) = p.parse_flag_group() else {
-            panic!("parse failed");
-        };
-        assert!(matches!(kind, GroupKind::Flags(_)));
-
+        let kind = unwrap_parse(p.parse_group_with_header());
         let GroupKind::Flags(flags) = kind else {
             panic!("not a flag group");
         };
@@ -1952,6 +1973,25 @@ mod tests {
             flags.flags.clear_flags,
             vec![FlagKind::MultiLine, FlagKind::SwapGreed],
         );
+
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::MultiLine),
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::FlagDelimiter,
+        ]));
+
+        let res = p.parse_group_with_header();
+        assert!(matches!(
+            res,
+            Err(Error {
+                kind: ErrorKind::UnexpectedToken(TokenKind::FlagDelimiter, ..),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1961,45 +2001,55 @@ mod tests {
             TokenKind::Literal('b'),
             TokenKind::Literal('c'),
         ]));
+        p.group_index = 4;
 
-        let Ok(Some(kind)) = p.parse_capturing_group() else {
-            panic!("parse failed");
-        };
+        let kind = unwrap_parse(p.parse_capturing_group());
         assert!(matches!(kind, GroupKind::Capturing(_)));
         let GroupKind::Capturing(group) = kind else {
             panic!("not a capturing group");
         };
 
         assert!(matches!(group.expr.kind, ExprKind::Concatenation(_)));
-
-        // can't usefully test for a non-matching condition here, it's the base case
-        // for groups which is expected always to match. If a group name or flag group
-        // is found by this parser it just winds up with an Empty expression, since those
-        // cases are handled above `parse_capturing_group`
+        assert_eq!(group.index, 4);
+        assert_eq!(p.group_index, 5);
     }
 
     #[test]
     fn flags() {
-        let p = Parser::new(token_iter(Vec::new()));
-        let flag_chars = vec!['i', 'm', 's', 'U', 'u', 'x'];
-        let flags = p.parse_flags(flag_chars);
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::Flag(Flag::IgnoreWhitespace),
+            TokenKind::Flag(Flag::MultiLine),
+            TokenKind::Flag(Flag::CRLFMode),
+            TokenKind::Flag(Flag::DotMatchesNewline),
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::CaseInsensitive),
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::Flag(Flag::Unicode),
+            TokenKind::CloseGroupOptions,
+        ]));
 
-        assert!(flags.is_ok());
-        let expected = vec![
-            FlagKind::CaseInsensitive,
-            FlagKind::MultiLine,
-            FlagKind::DotMatchesNewline,
-            FlagKind::SwapGreed,
-            FlagKind::Unicode,
+        let flags = unwrap_parse(p.parse_flags());
+
+        let expected_set = vec![
             FlagKind::IgnoreWhitespace,
+            FlagKind::MultiLine,
+            FlagKind::CRLFMode,
+            FlagKind::DotMatchesNewline,
         ];
-        for (expected_flag, actual_flag) in expected.into_iter().zip(flags.unwrap()) {
+        assert_eq!(expected_set.len(), flags.set_flags.len());
+        for (expected_flag, actual_flag) in expected_set.into_iter().zip(flags.set_flags) {
             assert_eq!(expected_flag, actual_flag);
         }
 
-        let invalid_flags = vec!['q'];
-        let flags = p.parse_flags(invalid_flags);
-        assert!(flags.is_err());
+        let expected_clear = vec![
+            FlagKind::CaseInsensitive,
+            FlagKind::SwapGreed,
+            FlagKind::Unicode,
+        ];
+        assert_eq!(expected_clear.len(), flags.clear_flags.len());
+        for (expected_flag, actual_flag) in expected_clear.into_iter().zip(flags.clear_flags) {
+            assert_eq!(expected_flag, actual_flag);
+        }
     }
 
     #[test]

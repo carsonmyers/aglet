@@ -23,6 +23,15 @@ impl fmt::Display for Error {
     }
 }
 
+impl From<tokenize::Error> for Error {
+    fn from(value: tokenize::Error) -> Self {
+        Error {
+            span: value.span,
+            kind: ErrorKind::TokenizeError(value.kind),
+        }
+    }
+}
+
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     #[error("tokenizer error: {0}")]
@@ -44,14 +53,6 @@ pub enum ErrorKind {
     NotImplemented,
 }
 
-impl From<tokenize::Error> for Error {
-    fn from(value: tokenize::Error) -> Self {
-        Error {
-            span: value.span,
-            kind: ErrorKind::TokenizeError(value.kind),
-        }
-    }
-}
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum TokenConvertError {

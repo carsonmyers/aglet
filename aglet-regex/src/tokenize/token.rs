@@ -65,7 +65,7 @@ impl TryFrom<char> for Flag {
 impl Flag {
     pub fn is_flag_char(c: char) -> bool {
         match c {
-            'i' | 'm' | 's' | 'U' | 'u' | 'x' => true,
+            'i' | 'm' | 's' | 'R' | 'U' | 'u' | 'x' => true,
             _ => false,
         }
     }
@@ -523,3 +523,13 @@ pub struct TokenStack {
     pub token: Token,
     pub stack: StateStack,
 }
+
+macro_rules! tok {
+    ( $kind:pat = $tok:ident) => {
+        let $kind = $tok.kind else {
+            panic!("token `{}` does not match pattern `{}`", stringify!($tok.kind), stringify!($kind));
+        };
+    }
+}
+
+pub(crate) use tok;

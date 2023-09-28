@@ -45,7 +45,7 @@ impl<'a> Input<'a> {
     #[inline]
     pub fn has_where<F>(&mut self, f: F) -> Result<bool>
     where
-        F: Fn(&TokenKind) -> bool
+        F: Fn(&TokenKind) -> bool,
     {
         match self.peek_kind() {
             None => Ok(false),
@@ -67,9 +67,10 @@ impl<'a> Input<'a> {
         item
     }
 
+    #[inline]
     pub fn match_where<F>(&mut self, f: F) -> Result<Option<Token>>
     where
-        F: Fn(&TokenKind) -> bool
+        F: Fn(&TokenKind) -> bool,
     {
         if self.has_where(f)? {
             Ok(Some(self
@@ -88,4 +89,3 @@ impl<'a> Input<'a> {
         }
     }
 }
-

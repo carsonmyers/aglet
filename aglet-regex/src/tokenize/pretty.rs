@@ -147,22 +147,28 @@ impl Token {
             TokenKind::CloseGroup => w
                 .print_token("CloseGroup", Some(self.span), stack, None)
                 .finish(),
-            TokenKind::NonCapturing => w
-                .print_token("NonCapturing", Some(self.span), stack, None)
+            TokenKind::OpenGroupOptions => w
+                .print_token("OpenGroupOptions", Some(self.span), stack, None)
+                .finish(),
+            TokenKind::CloseGroupOptions => w
+                .print_token("CloseGroupOptions", Some(self.span), stack, None)
+                .finish(),
+            TokenKind::OpenGroupName => w
+                .print_token("OpenGroupName", Some(self.span), stack, None)
+                .finish(),
+            TokenKind::CloseGroupName => w
+                .print_token("CloseGroupName", Some(self.span), stack, None)
                 .finish(),
             TokenKind::Name(name) => w
                 .print_token("Name", Some(self.span), stack, None)
                 .property(None, name, None)
                 .finish(),
-            TokenKind::Flags(set, clear) => w
-                .print_token("Flags", Some(self.span), stack, None)
-                .property(Some("set"), set, None)
-                .property(Some("clear"), clear, None)
+            TokenKind::Flag(flag) => w
+                .print_token("Flag", Some(self.span), stack, None)
+                .property(None, flag, None)
                 .finish(),
-            TokenKind::NonCapturingFlags(set, clear) => w
-                .print_token("NonCapturingFlags", Some(self.span), stack, None)
-                .property(Some("set"), set, None)
-                .property(Some("clear"), clear, None)
+            TokenKind::FlagDelimiter => w
+                .print_token("FlagDelimiter", Some(self.span), stack, None)
                 .finish(),
             TokenKind::OpenBracket => w
                 .print_token("OpenBracket", Some(self.span), stack, COLOR_CLASS_ITEM)
