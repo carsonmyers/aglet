@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
-use aglet_pretty::{ColorWhen, Pretty, PrettyPrintSettings, PrettyPrinter, SpanPrinter};
+use aglet_pretty::{ColorWhen, PrettyPrintSettings, PrettyPrinter};
 use aglet_regex::{Parser, Tokenizer};
+use aglet_text::SourceFile;
 use clap::Args;
 use colored::control::ShouldColorize;
 use colored::Colorize;
@@ -28,7 +29,7 @@ pub struct RegexArgs {
     #[arg(short, long)]
     meta: bool,
 
-    /// Include alignment spacing in the spans column
+    /// Remove alignment spacing in the spans column
     #[arg(long)]
     no_align: bool,
 
@@ -67,8 +68,13 @@ pub fn run(input: Input, args: RegexArgs) -> Result<()> {
         .align(!args.no_align)
         .include_spans(args.spans);
 
+    if is_stdin && (!args.tokens && !args.ast) {
+        println!("Warning: no output options used (try --ast or --tokens)");
+    }
+
     for section in iter {
         let section = section?;
+        let printer_settings = printer_settings.clone().source(section.source.clone());
         run_section(&section, &printer_settings, is_stdin, &args)?;
     }
 
@@ -82,7 +88,7 @@ fn run_section(
     args: &RegexArgs,
 ) -> Result<()> {
     if !is_stdin {
-        println!("{}\n", section.input);
+        println!("{}\n", section.source.src);
     }
 
     if args.tokens {
@@ -101,9 +107,9 @@ fn print_tokens(
     printer_settings: PrettyPrintSettings,
     args: &RegexArgs,
 ) -> Result<()> {
-    let mut printer = PrettyPrinter::new(printer_settings.clone());
+    let mut printer = PrettyPrinter::new(printer_settings);
 
-    let tokenizer = Tokenizer::new(section.input.as_ref());
+    let tokenizer = Tokenizer::new(section.source.src.as_ref());
     if args.meta {
         for token_stack in tokenizer.into_token_stack_iter() {
             match token_stack {
@@ -132,7 +138,7 @@ fn print_tokens(
 fn print_ast(section: &InputSection, printer_settings: PrettyPrintSettings) -> Result<()> {
     let mut printer = PrettyPrinter::new(printer_settings);
 
-    let tokens = Tokenizer::new(section.input.as_ref()).collect_vec();
+    let tokens = Tokenizer::new(section.source.src.as_ref()).collect_vec();
     match Parser::new(tokens.into_iter()).parse() {
         Ok(ast) => println!("AST:\n{}\n", printer.print(&ast)?.finish()?),
         Err(e) => println!("{:?}", e),
@@ -142,7 +148,7 @@ fn print_ast(section: &InputSection, printer_settings: PrettyPrintSettings) -> R
 }
 
 struct InputSection {
-    input: String,
+    source: SourceFile,
     tests: Vec<TestKind>,
 }
 
@@ -152,9 +158,9 @@ enum TestKind {
 }
 
 struct SectionIterator {
-    input:        CliInput,
+    input: CliInput,
     last_section: Option<InputSection>,
-    allow_tests:  bool,
+    allow_tests: bool,
 }
 
 impl SectionIterator {
@@ -215,7 +221,7 @@ impl SectionIterator {
 
     fn start_section(&mut self, input: String) -> Option<InputSection> {
         self.last_section.replace(InputSection {
-            input,
+            source: SourceFile::new_from_source("".to_string(), "<stdin>".to_string(), input),
             tests: Vec::new(),
         })
     }
@@ -334,7 +340,7 @@ mod tests {
         let mut iter = SectionIterator::new(Box::new(input), true);
 
         let section = iter.next().unwrap().unwrap();
-        assert_eq!(section.input, "abc\ndef".to_string());
+        assert_eq!(section.source.src, "abc\ndef".to_string());
         assert_eq!(section.tests.len(), 1);
         assert!(matches!(section.tests[0], TestKind::TokenTest(_)));
         let TestKind::TokenTest(data) = &section.tests[0] else {
@@ -343,7 +349,7 @@ mod tests {
         assert_eq!(data, "token test\ndata");
 
         let section = iter.next().unwrap().unwrap();
-        assert_eq!(section.input, "ghi\njkl");
+        assert_eq!(section.source.src, "ghi\njkl");
         assert_eq!(section.tests.len(), 2);
         assert!(matches!(section.tests[0], TestKind::TokenTest(_)));
         let TestKind::TokenTest(data) = &section.tests[0] else {
@@ -389,7 +395,7 @@ mod tests {
         let Some(Ok(section)) = section else {
             panic!("error reading section");
         };
-        assert_eq!(section.input, "abc\ndef".to_string());
+        assert_eq!(section.source.src, "abc\ndef".to_string());
         assert_eq!(section.tests.len(), 0);
 
         let section = iter.next();
@@ -397,7 +403,7 @@ mod tests {
         let Some(Ok(section)) = section else {
             panic!("error reading section");
         };
-        assert_eq!(section.input, "TOKENS:\nmisinterpreted\ntest data");
+        assert_eq!(section.source.src, "TOKENS:\nmisinterpreted\ntest data");
         assert_eq!(section.tests.len(), 0);
 
         let section = iter.next();

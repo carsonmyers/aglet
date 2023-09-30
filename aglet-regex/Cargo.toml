@@ -2,7 +2,7 @@
 name = "aglet-regex"
 version = "0.1.0"
 authors = ["Carson Myers <carson@myers.se>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 aglet-text = { path = "../aglet-text" }
@@ -12,3 +12,4 @@ eyre = { version = "0.6.5", default-features = false }
 thiserror = "^1"
 termcolor = "^1"
 colored = "2.0.0"
+unicode-ident = "1.0.12"

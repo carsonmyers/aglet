@@ -1,6 +1,5 @@
 use color_eyre::{
-    eyre::{eyre, Report, WrapErr},
-    Section,
+    eyre::{Report, WrapErr},
 };
 use thiserror::Error;
 

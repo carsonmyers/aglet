@@ -7,7 +7,7 @@ mod writer;
 use std::iter;
 use std::result;
 
-use aglet_text::Span;
+use aglet_text::{SourceFile, Span};
 use ast_printer::AstPrinter;
 use colored::control::ShouldColorize;
 use colored::{Color, Colorize};
@@ -34,9 +34,9 @@ const EXTRA_COLOR: Color = Color::TrueColor {
 /// be displayed to the right.
 pub struct PrettyPrinter {
     settings: PrettyPrintSettings,
-    main:     String,
-    spans:    Vec<Option<Span>>,
-    meta:     Vec<Option<String>>,
+    main: String,
+    spans: Vec<Option<Span>>,
+    meta: Vec<Option<String>>,
 }
 
 impl PrettyPrinter {
@@ -91,11 +91,27 @@ impl PrettyPrinter {
             .spans
             .iter()
             .map(|maybe_span| {
-                maybe_span
-                    .as_ref()
-                    .map(|span| (format!("{:?}", span.start), format!("{:?}", span.end)))
+                maybe_span.as_ref().map(|span| {
+                    self.settings
+                        .source
+                        .as_ref()
+                        .and_then(|file| {
+                            let filename = file.filename.clone();
+                            let start = file.file_position_from_offset(&span.start);
+                            let end = file.file_position_from_offset(&span.end);
+
+                            start.and_then(|start| end.map(|end| (filename, start, end)))
+                        })
+                        .map(|(filename, start, end)| {
+                            (
+                                format!("{} {:?}", filename, start),
+                                format!("{:?}", end),
+                            )
+                        })
+                        .unwrap_or_else(|| (format!("{:?}", span.start), format!("{:?}", span.end)))
+                })
             })
-            // spans are optional, so chain them with a neverending string of `None`
+            // spans are optional, so chain them with a never-ending string of `None`
             // so that the main output isn't cut short if they're missing
             .collect::<Vec<_>>();
 
@@ -251,14 +267,21 @@ fn len_clean(string: &str) -> usize {
 
 #[derive(Debug, Clone)]
 pub struct PrettyPrintSettings {
-    align:         bool,
+    source: Option<SourceFile>,
+    align: bool,
     include_spans: bool,
-    include_meta:  bool,
-    color_when:    ColorWhen,
-    indent:        String,
+    include_meta: bool,
+    color_when: ColorWhen,
+    indent: String,
 }
 
 impl PrettyPrintSettings {
+    /// Add a source file to include line/column number information with spans
+    pub fn source(mut self, source: SourceFile) -> Self {
+        self.source = Some(source);
+        self
+    }
+
     /// Control whether the pretty printer should align its output columns
     /// with extra spaces to ensure they line up visually.
     pub fn align(mut self, value: bool) -> Self {
@@ -294,11 +317,12 @@ impl PrettyPrintSettings {
 impl Default for PrettyPrintSettings {
     fn default() -> Self {
         Self {
-            align:         true,
+            source: None,
+            align: true,
             include_spans: true,
-            include_meta:  true,
-            color_when:    ColorWhen::Auto,
-            indent:        "  ".to_string(),
+            include_meta: true,
+            color_when: ColorWhen::Auto,
+            indent: "  ".to_string(),
         }
     }
 }

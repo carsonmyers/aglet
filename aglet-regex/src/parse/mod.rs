@@ -43,3 +43,26 @@ pub(crate) fn span_token_iter(
             Ok(tok)
         })
 }
+
+#[cfg(test)]
+macro_rules! assert_kind {
+    ($expr:expr, $kind:pat) => {
+        if !matches!($expr.kind, $kind) {
+            panic!("{:?} does not match {}", $expr.kind, stringify!($kind));
+        }
+    }
+}
+
+#[cfg(test)]
+macro_rules! assert_err {
+    ($res:expr, $kind:pat) => {
+        if !matches!($res, Err(Error { kind: $kind, .. })) {
+            panic!("{:?} does not match error {}", $res, stringify!($kind));
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) use assert_kind;
+#[cfg(test)]
+pub(crate) use assert_err;

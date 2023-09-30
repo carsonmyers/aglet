@@ -9,48 +9,61 @@ pub use token::{Flag, Token, TokenKind};
 pub use tokenizer::Tokenizer;
 
 #[cfg(test)]
-pub(crate) fn assert_tokens(mut tr: Tokenizer, tokens: Vec<TokenKind>) {
-    let total_expected = tokens.len();
-    let mut count = 0;
-    for expected in tokens {
-        let actual = tr
-            .next()
-            .expect("ran out of tokens")
-            .expect("received error")
-            .kind;
-        assert_eq!(expected, actual);
-        count += 1;
-    }
-
-    assert_eq!(total_expected, count);
-    assert_next_none!(tr);
-}
-
-#[cfg(test)]
 macro_rules! assert_next_tok {
     ( $tokenizer:expr , $kind:pat ) => {
-        assert!(matches!(
-            $tokenizer.next(),
+        let next = $tokenizer.next();
+        if !matches!(
+            next,
             Some(Ok(Token { kind: $kind, .. }))
-        ));
+        ) {
+            panic!("{:?} does not match token {}", next, stringify!($kind));
+        }
     };
 }
 
 #[cfg(test)]
 macro_rules! assert_next_err {
     ( $tokenizer:expr , $kind:pat ) => {
-        assert!(matches!(
-            $tokenizer.next(),
+        let next = $tokenizer.next();
+        if !matches!(
+            next,
             Some(Err(Error { kind: $kind, .. }))
-        ));
+        ) && !matches!(
+            next,
+            Some(Ok(Token { kind: TokenKind::Error(Error { kind: $kind, .. }), .. }))
+        ) {
+            panic!("{:?} does not match error {}", next, stringify!($kind));
+        }
     };
 }
 
 #[cfg(test)]
 macro_rules! assert_next_none {
     ( $tokenizer:expr ) => {
-        assert!(matches!($tokenizer.next(), None));
+        let next = $tokenizer.next();
+        if !next.is_none() {
+            panic!("{:?} is not None", next);
+        }
     };
+}
+
+#[cfg(test)]
+pub(crate) fn assert_tokens(mut tr: Tokenizer, tokens: Vec<TokenKind>) {
+    let total_expected = tokens.len();
+    let mut count = 0;
+    for (i, expected) in tokens.iter().enumerate() {
+        let actual = tr
+            .next()
+            .expect(&format!("ran out of tokens; expecting {:?} ({})", expected, i))
+            .unwrap_or_else(|err| panic!("received error {:?}; expecting {:?} ({})", err, expected, i))
+            .kind;
+
+        assert_eq!(expected, &actual, "failed to match token {}", i);
+        count += 1;
+    }
+
+    assert_eq!(total_expected, count);
+    assert_next_none!(tr);
 }
 
 #[cfg(test)]

@@ -13,30 +13,32 @@ const COLOR_ERROR: Option<Color> = Some(Color::Red);
 impl Pretty for TokenStack {
     fn print(&self, w: &mut Writer<'_>) -> Result {
         let stack = Some(format!("\t\u{2192} {:?}", self.stack));
-        let in_class = self
-            .stack
-            .get()
-            .map(|state| *state == State::Class)
-            .unwrap_or(false);
-        self.token.pretty_print(stack, in_class, w)
+        let top_state = self.stack.get().map(|state| *state).ok();
+
+        self.token.pretty_print(stack, top_state, w)
     }
 }
 
 impl Pretty for Token {
     fn print(&self, w: &mut Writer<'_>) -> Result {
-        self.pretty_print(None, false, w)
+        self.pretty_print(None, None, w)
     }
 }
 
 impl Token {
-    fn pretty_print(&self, stack: Option<String>, in_class: bool, w: &mut Writer<'_>) -> Result {
+    fn pretty_print(
+        &self,
+        stack: Option<String>,
+        top_state: Option<State>,
+        w: &mut Writer<'_>,
+    ) -> Result {
         match &self.kind {
             TokenKind::Literal(c) => w
                 .print_token(
                     "Literal",
                     Some(self.span),
                     stack,
-                    if in_class {
+                    if matches!(top_state, Some(State::Class)) {
                         COLOR_CLASS_ITEM
                     } else {
                         COLOR_MATCH_ONE
@@ -49,7 +51,7 @@ impl Token {
                     "Digit",
                     Some(self.span),
                     stack,
-                    if in_class {
+                    if matches!(top_state, Some(State::Class)) {
                         COLOR_CLASS_ITEM
                     } else {
                         COLOR_MATCH_ONE
@@ -66,7 +68,7 @@ impl Token {
                     "Whitespace",
                     Some(self.span),
                     stack,
-                    if in_class {
+                    if matches!(top_state, Some(State::Class)) {
                         COLOR_CLASS_ITEM
                     } else {
                         COLOR_MATCH_ONE
@@ -83,7 +85,7 @@ impl Token {
                     "WordChar",
                     Some(self.span),
                     stack,
-                    if in_class {
+                    if matches!(top_state, Some(State::Class)) {
                         COLOR_CLASS_ITEM
                     } else {
                         COLOR_MATCH_ONE
@@ -120,10 +122,32 @@ impl Token {
                 .print_token("NonWordBoundary", Some(self.span), stack, COLOR_BOUNDARY)
                 .finish(),
             TokenKind::OpenBrace => w
-                .print_token("OpenBrace", Some(self.span), stack, COLOR_REPETITION)
+                .print_token(
+                    "OpenBrace",
+                    Some(self.span),
+                    stack,
+                    if matches!(top_state, Some(State::Range)) {
+                        COLOR_REPETITION
+                    } else if matches!(top_state, Some(State::UnicodeProperties)) {
+                        COLOR_CLASS_ITEM
+                    } else {
+                        None
+                    },
+                )
                 .finish(),
             TokenKind::CloseBrace => w
-                .print_token("CloseBrace", Some(self.span), stack, COLOR_REPETITION)
+                .print_token(
+                    "CloseBrace",
+                    Some(self.span),
+                    stack,
+                    if matches!(top_state, Some(State::Range)) {
+                        COLOR_REPETITION
+                    } else if matches!(top_state, Some(State::UnicodeProperties)) {
+                        COLOR_CLASS_ITEM
+                    } else {
+                        None
+                    },
+                )
                 .finish(),
             TokenKind::Number(value) => w
                 .print_token("Number", Some(self.span), stack, COLOR_REPETITION)
@@ -159,10 +183,6 @@ impl Token {
             TokenKind::CloseGroupName => w
                 .print_token("CloseGroupName", Some(self.span), stack, None)
                 .finish(),
-            TokenKind::Name(name) => w
-                .print_token("Name", Some(self.span), stack, None)
-                .property(None, name, None)
-                .finish(),
             TokenKind::Flag(flag) => w
                 .print_token("Flag", Some(self.span), stack, None)
                 .property(None, flag, None)
@@ -175,6 +195,9 @@ impl Token {
                 .finish(),
             TokenKind::CloseBracket => w
                 .print_token("CloseBracket", Some(self.span), stack, COLOR_CLASS_ITEM)
+                .finish(),
+            TokenKind::Colon => w
+                .print_token("Colon", Some(self.span), stack, COLOR_CLASS_ITEM)
                 .finish(),
             TokenKind::Negated => w
                 .print_token("Negated", Some(self.span), stack, COLOR_CLASS_ITEM)
@@ -200,41 +223,34 @@ impl Token {
                     None,
                 )
                 .finish(),
-            TokenKind::UnicodeLongStart(negated) => w
-                .print_token("UnicodeLongStart", Some(self.span), stack, COLOR_CLASS_ITEM)
+            TokenKind::UnicodeLong(negated) => w
+                .print_token("UnicodeLong", Some(self.span), stack, COLOR_CLASS_ITEM)
                 .maybe_property(
                     Some("negated"),
                     if *negated { Some(&true) } else { None },
                     None,
                 )
                 .finish(),
-            TokenKind::UnicodeLongEnd => w
-                .print_token("UnicodeLongEnd", Some(self.span), stack, COLOR_CLASS_ITEM)
+            TokenKind::Equal => w
+                .print_token("Equal", Some(self.span), stack, COLOR_CLASS_ITEM)
                 .finish(),
-            TokenKind::UnicodePropName(name) => w
-                .print_token("UnicodePropName", Some(self.span), stack, COLOR_CLASS_ITEM)
+            TokenKind::Bang => w
+                .print_token("Bang", Some(self.span), stack, COLOR_CLASS_ITEM)
+                .finish(),
+            TokenKind::Name(name) => w
+                .print_token(
+                    "Name",
+                    Some(self.span),
+                    stack,
+                    if matches!(top_state, Some(State::ClassName)) {
+                        COLOR_CLASS_ITEM
+                    } else if matches!(top_state, Some(State::UnicodeProperties)) {
+                        COLOR_CLASS_ITEM
+                    } else {
+                        None
+                    },
+                )
                 .property(None, name, None)
-                .finish(),
-            TokenKind::UnicodeEqual(negated) => w
-                .print_token("UnicodeEqual", Some(self.span), stack, COLOR_CLASS_ITEM)
-                .maybe_property(
-                    Some("negated"),
-                    if *negated { Some(&true) } else { None },
-                    None,
-                )
-                .finish(),
-            TokenKind::UnicodePropValue(value) => w
-                .print_token("UnicodePropValue", Some(self.span), stack, COLOR_CLASS_ITEM)
-                .property(None, value, COLOR_CLASS_ITEM)
-                .finish(),
-            TokenKind::ClassName(name, negated) => w
-                .print_token("ClassName", Some(self.span), stack, COLOR_CLASS_ITEM)
-                .property(Some("name"), name, None)
-                .maybe_property(
-                    Some("negated"),
-                    if *negated { Some(&true) } else { None },
-                    None,
-                )
                 .finish(),
             TokenKind::Error(err) => w
                 .print_token("Error", Some(self.span), stack, COLOR_ERROR)

@@ -5,8 +5,8 @@ use aglet_text::Span;
 use crate::parse::ast::*;
 use crate::parse::error::*;
 use crate::parse::input::Input;
-use crate::tokenize::{self, Flag, Token, TokenKind};
 use crate::tokenize::token::tok;
+use crate::tokenize::{self, Token, TokenKind};
 
 /// Parse regular expressions from a [token stream](tokenize::Tokenizer)
 ///
@@ -48,16 +48,15 @@ use crate::tokenize::token::tok;
 /// group_contents ->
 ///     | '?' flags? ':' expr
 ///     | '?' flags
-///     | '?' 'P'? '<' GROUP_NAME '>' expr
+///     | '?' 'P'? '<' NAME '>' expr
 ///     | expr
 /// class ->
 ///     | unicode_class
 ///     | '[' specified_class ']'
 /// unicode_class ->
 ///     | unicode_escape CHAR
-///     | unicode_escape '{' UNICODE_PROP_VALUE '}'
-///     | unicode_escape '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-///     | unicode_escape '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+///     | unicode_escape '{' NAME '}'
+///     | unicode_escape '{' NAME '!'? '=' NAME '}'
 /// unicode_escape ->
 ///     | '\p'
 ///     | '\P'
@@ -70,7 +69,7 @@ use crate::tokenize::token::tok;
 ///     | DIGIT_CLASS
 ///     | WHITESPACE_CLASS
 ///     | WORD_CLASS
-///     | '[' POSIX_NAME ']'
+///     | '[' ':' '^'? NAME ':' ']'
 ///     | '[' specified_class ']'
 /// spec_set ->
 ///     | '~~' spec_term spec_set?
@@ -145,6 +144,8 @@ impl<'a> Parser<'a> {
             if !self.input.has_where(TokenKind::is_alternate)? {
                 break;
             }
+
+            self.input.next();
         }
 
         if items.len() > 1 {
@@ -284,27 +285,30 @@ impl<'a> Parser<'a> {
     pub fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
         if self.input.has_where(TokenKind::is_question)? {
             self.input.next();
+            Ok(Some(RepetitionKind::ZeroOrOne))
+        } else {
+            Ok(None)
         }
-
-        Ok(Some(RepetitionKind::ZeroOrOne))
     }
 
     /// Parse the zero-or-more quantity specifier (`*`)
     pub fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
         if self.input.has_where(TokenKind::is_star)? {
             self.input.next();
+            Ok(Some(RepetitionKind::ZeroOrMore))
+        } else {
+            Ok(None)
         }
-
-        Ok(Some(RepetitionKind::ZeroOrMore))
     }
 
     /// Parse the one-or-more quantity specifier (`+`)
     pub fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
         if self.input.has_where(TokenKind::is_plus)? {
             self.input.next();
+            Ok(Some(RepetitionKind::OneOrMore))
+        } else {
+            Ok(None)
         }
-
-        Ok(Some(RepetitionKind::OneOrMore))
     }
 
     /// Parse a specified range for a repetition
@@ -385,14 +389,7 @@ impl<'a> Parser<'a> {
     ///     | class
     /// ```
     pub fn parse_item(&mut self) -> Result<Option<Expr>> {
-        match self.input.peek_kind() {
-            Some(Ok(
-                TokenKind::Star | TokenKind::Plus | TokenKind::Question | TokenKind::OpenBrace,
-            )) => Err(self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal")),
-            _ => Ok(()),
-        }?;
-
-        self.parse_alts(vec![
+        let item = self.parse_alts(vec![
             Self::parse_dot,
             Self::parse_literal,
             Self::parse_digit_class,
@@ -401,7 +398,19 @@ impl<'a> Parser<'a> {
             Self::parse_boundary,
             Self::parse_group,
             Self::parse_class,
-        ])
+        ])?;
+
+        // Valid tokens to follow an item come from those productions that can consume an item,
+        // in particular groups and alternation
+        if item.is_none() {
+            match self.input.peek_kind() {
+                Some(Ok(TokenKind::CloseGroup | TokenKind::Alternate)) => Ok(None),
+                Some(Ok(_)) => Err(self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal")),
+                _ => Ok(None),
+            }
+        } else {
+            Ok(item)
+        }
     }
 
     /// Parse the "any" item (`.`)
@@ -607,7 +616,7 @@ impl<'a> Parser<'a> {
     /// group_contents ->
     ///     | '?' flags? ':' expr
     ///     | '?' flags
-    ///     | '?' 'P'? '<' GROUP_NAME '>' expr
+    ///     | '?' 'P'? '<' NAME '>' expr
     /// ```
     pub fn parse_group_with_header(&mut self) -> Result<Option<GroupKind>> {
         let Some(open_tok) = self.input.match_where(TokenKind::is_open_group_options)? else {
@@ -685,18 +694,26 @@ impl<'a> Parser<'a> {
                     set_flags.push(f.into())
                 }
             } else if tok.kind.is_flag_delimiter() {
-                // TODO: multiple delimiters should produce an error
+                if clearing {
+                    return Err(self.input.error(ErrorKind::UnexpectedToken(
+                        TokenKind::FlagDelimiter,
+                        "end of flags `:` or `)`".to_string(),
+                    )));
+                }
+
                 clearing = true;
             }
         }
 
-        let span = span.unwrap_or_else(|| Span::new(self.input.position(), self.input.position()));
-
-        Ok(Some(Flags {
-            span,
-            set_flags,
-            clear_flags,
-        }))
+        if span.is_some() {
+            Ok(Some(Flags {
+                span: span.unwrap(),
+                set_flags,
+                clear_flags,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Parse a capturing group
@@ -842,80 +859,72 @@ impl<'a> Parser<'a> {
     ///
     /// ```grammar
     /// unicode_class ->
-    ///     | UNICODE_LONG '{' UNICODE_PROP_VALUE '}'
-    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '=' UNICODE_PROP_VALUE '}'
-    ///     | UNICODE_LONG '{' UNICODE_PROP_NAME '!=' UNICODE_PROP_VALUE '}'
+    ///     | UNICODE_LONG '{' NAME '}'
+    ///     | UNICODE_LONG '{' NAME '!'? '=' NAME '}'
     /// ```
     pub fn parse_unicode_long_class(&mut self) -> Result<Option<Expr>> {
-        let Some(open_tok) = self.input.match_where(TokenKind::is_unicode_long_start)? else {
+        let Some(open_tok) = self.input.match_where(TokenKind::is_unicode_long)? else {
             return Ok(None);
         };
 
-        tok!(TokenKind::UnicodeLongStart(mut negated) = open_tok);
-        let mut name: Option<StringSpan> = None;
-        let mut value: Option<StringSpan> = None;
+        tok!(TokenKind::UnicodeLong(open_negated) = open_tok);
 
-        if let Some(val_tok) = self.input.match_where(TokenKind::is_unicode_prop_value)? {
-            // for the form `\p{Value}`
-            tok!(TokenKind::UnicodePropValue(v) = val_tok);
-            value = Some(StringSpan {
-                span: val_tok.span,
-                value: v,
-            })
-        } else if let Some(name_tok) = self.input.match_where(TokenKind::is_unicode_prop_name)? {
-            // for the form `\p{Name=Value}`
-            tok!(TokenKind::UnicodePropName(n) = name_tok);
-            name = Some(StringSpan {
-                span: name_tok.span,
-                value: n,
-            });
+        self.expect_match("start of unicode property `{`", TokenKind::is_open_brace)?;
 
-            // the long version of a unicode class can be double negated, e.g.:
-            //
-            // \P{name!=value}
-            //  ^     ^
-            // here  here
-            //
-            // the resulting negation is the exclusive or (equivalent to NEQ) of both
-            let eq_tok = self.expect_match("equal sign", TokenKind::is_unicode_equal)?;
-            tok!(TokenKind::UnicodeEqual(eq_negated) = eq_tok);
-            negated = negated != eq_negated;
+        // The first name is either the property name or value, depending on whether this is
+        // the `\p{Value}` or `\p{Prop=Value}` form
+        let first_name_tok = self.expect_match("name", TokenKind::is_name)?;
+        tok!(TokenKind::Name(n) = first_name_tok);
+        let first_name = StringSpan {
+            span: first_name_tok.span,
+            value: n,
+        };
 
-            let val_tok =
-                self.expect_match("unicode property value", TokenKind::is_unicode_prop_value)?;
-            tok!(TokenKind::UnicodePropValue(v) = val_tok);
-            value = Some(StringSpan {
-                span: val_tok.span,
+        let mut second_name = None;
+
+        // optionally match `=` or `!=`
+        let eq_negated = self.input.match_where(TokenKind::is_bang)?.is_some();
+        let has_eq = self.input.match_where(TokenKind::is_equal)?.is_some();
+
+        // TODO: detect a ! with no corresponding =
+
+        if has_eq {
+            let second_name_tok = self.expect_match("property value", TokenKind::is_name)?;
+
+            tok!(TokenKind::Name(v) = second_name_tok);
+            second_name = Some(StringSpan {
+                span: second_name_tok.span,
                 value: v,
             });
-        } else {
-            self.expected("unicode property name or value")?;
         }
 
         let close_tok = self.expect_match(
             "unicode property closing brace `}`",
-            TokenKind::is_unicode_long_end,
+            TokenKind::is_close_brace,
         )?;
 
-        // construct the unicode class with the name and value collected from
-        // UnicodePropValue and (optionally) UnicodePropName tokens
         let span = Span::wrap(&open_tok.span, &close_tok.span);
-        let unicode_class = UnicodeClass {
-            span,
-            name,
-            value: value.expect("property value"),
+        let kind = match second_name {
+            Some(second_name) => ClassKind::Unicode(UnicodeClass {
+                span,
+                name: Some(first_name),
+                value: second_name,
+            }),
+            None => ClassKind::Unicode(UnicodeClass {
+                span,
+                name: None,
+                value: first_name,
+            }),
         };
 
-        // construct a class expression with the negation value from the UnicodeLongStart
-        // and (optionally) UnicodeEqual tokens
-        Ok(Some(Expr {
+        let negated = open_negated != eq_negated;
+        let kind = ExprKind::Class(Class {
             span,
-            kind: ExprKind::Class(Class {
-                span,
-                negated,
-                kind: ClassKind::Unicode(unicode_class),
-            }),
-        }))
+            negated,
+            kind,
+        });
+
+        Ok(Some(Expr { span, kind }))
     }
 
     /// Parse a specified class
@@ -1018,7 +1027,7 @@ impl<'a> Parser<'a> {
     ///     | DIGIT_CLASS
     ///     | WHITESPACE_CLASS
     ///     | WORD_CLASS
-    ///     | '[' POSIX_NAME ']'
+    ///     | '[' ':' '^'? NAME ':' ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
     ///     | '~~' spec_term spec_set?
@@ -1052,7 +1061,7 @@ impl<'a> Parser<'a> {
     ///     | DIGIT_CLASS
     ///     | WHITESPACE_CLASS
     ///     | WORD_CLASS
-    ///     | '[' POSIX_NAME ']'
+    ///     | '[' ':' '^'? NAME ':' ']'
     ///     | '[' specified_class ']'
     /// spec_set ->
     ///     | '~~' spec_term spec_set?
@@ -1091,24 +1100,23 @@ impl<'a> Parser<'a> {
         tok!(TokenKind::Literal(c_start) = start_tok);
 
         // optionally match the second half of a range
-        let mut spec: Option<ClassSpec> = None;
-        if self.input.match_where(TokenKind::is_range)?.is_some() {
+        let spec = if self.input.match_where(TokenKind::is_range)?.is_some() {
             let end_tok = self.expect_match("end of range", TokenKind::is_literal)?;
             tok!(TokenKind::Literal(c_end) = end_tok);
 
             // if a range is matched, a range class specifier will be returned
             let span = Span::wrap(&start_tok.span, &end_tok.span);
             let kind = ClassSpecKind::Range(c_start, c_end);
-            spec = Some(ClassSpec { span, kind })
+            ClassSpec { span, kind }
         } else {
             // if a range wasn't matched, then the literal class specifier will be
             // returned on its own
             let span = start_tok.span;
             let kind = ClassSpecKind::Literal(c_start);
-            spec = Some(ClassSpec { span, kind });
-        }
+            ClassSpec { span, kind }
+        };
 
-        Ok(spec)
+        Ok(Some(spec))
     }
 
     /// Parse a digit short class, `\d` or `\D`
@@ -1176,14 +1184,14 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
 
-        let mut kind: Option<ClassSpecKind> = None;
-        let mut span: Option<Span> = None;
-
         // attempt to match a POSIX class name
-        if let Some(name_tok) = self.input.match_where(TokenKind::is_class_name)? {
-            let close_tok =
-                self.expect_match("end of posix class `]`", TokenKind::is_close_bracket)?;
-            tok!(TokenKind::ClassName(name, negated) = name_tok);
+        let kind = if let Some(open_colon) = self.input.match_where(TokenKind::is_colon)? {
+            let negated = self.input.match_where(TokenKind::is_negated)?.is_some();
+            let name = self.expect_match("posix class name", TokenKind::is_name)?;
+            let close_colon =
+                self.expect_match("end of posix class name `:`", TokenKind::is_colon)?;
+
+            tok!(TokenKind::Name(name) = name);
 
             // convert the matched name into a POSIX class item
             let posix_kind = match PosixKind::try_from(name.as_ref()) {
@@ -1191,13 +1199,12 @@ impl<'a> Parser<'a> {
                 Err(err) => Err(self.input.error(ErrorKind::TokenConvertError(err))),
             }?;
 
-            let kind_span = Span::wrap(&open_tok.span, &close_tok.span);
-            span = Some(kind_span);
-            kind = Some(ClassSpecKind::Posix(PosixClass {
+            let kind_span = Span::wrap(&open_colon.span, &close_colon.span);
+            ClassSpecKind::Posix(PosixClass {
                 span: kind_span,
                 kind: posix_kind,
                 negated,
-            }));
+            })
         } else {
             // if a POSIX class wasn't matched, then this must be the beginning of a subclass.
             let negated = self.input.match_where(TokenKind::is_negated)?.is_some();
@@ -1208,35 +1215,32 @@ impl<'a> Parser<'a> {
                 items.push(item);
             }
 
-            let close_tok =
-                self.expect_match("end of character class `]`", TokenKind::is_close_bracket)?;
-
             let inner_span_start = items
                 .first()
                 .map(|item| item.span.start)
-                .unwrap_or(open_tok.span.start);
+                .unwrap_or(open_tok.span.end);
             let inner_span_end = items
                 .last()
                 .map(|item| item.span.end)
-                .unwrap_or(close_tok.span.end);
-            let inner_span = Span::new(inner_span_start, inner_span_end);
-            let kind_span = Span::wrap(&open_tok.span, &close_tok.span);
+                .unwrap_or(open_tok.span.end);
+            let kind_span = Span::new(inner_span_start, inner_span_end);
             let class_kind = ClassKind::Specified(SpecifiedClass {
-                span: inner_span,
+                span: kind_span,
                 items,
             });
 
             // create a subclass class specifier
-            span = Some(kind_span);
-            kind = Some(ClassSpecKind::Class(Class {
+            ClassSpecKind::Class(Class {
                 span: kind_span,
                 kind: class_kind,
                 negated,
-            }));
-        }
+            })
+        };
 
-        let kind = kind.expect("posix class or specified class");
-        let span = span.expect("class term span");
+        let close_tok = self.expect_match("end of posix class `]`", TokenKind::is_close_bracket)?;
+
+        let span = Span::wrap(&open_tok.span, &close_tok.span);
+
         Ok(Some(ClassSpec { span, kind }))
     }
 
@@ -1311,7 +1315,7 @@ impl<'a> Parser<'a> {
         Ok(nested_set)
     }
 
-    fn parse_alts<F, R>(&mut self, mut alts: Vec<F>) -> Result<Option<R>>
+    fn parse_alts<F, R>(&mut self, alts: Vec<F>) -> Result<Option<R>>
     where
         F: FnMut(&mut Self) -> Result<Option<R>>,
     {
@@ -1352,28 +1356,21 @@ impl<'a> Parser<'a> {
                 .error(ErrorKind::UnexpectedEOF(expect.to_string()))),
         }
     }
-
-    fn expected(&mut self, expect: &str) -> Result<Token> {
-        match self.input.next() {
-            Some(Ok(tok)) => Err(self
-                .input
-                .error(ErrorKind::UnexpectedToken(tok.kind, expect.to_string()))),
-            Some(Err(err)) => Err(err),
-            None => Err(self
-                .input
-                .error(ErrorKind::UnexpectedEOF(expect.to_string()))),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::{span_token_iter, token_iter};
+    use crate::parse::{assert_err, assert_kind, span_token_iter, token_iter};
+    use crate::tokenize::Flag;
+    use std::fmt::Debug;
 
-    fn unwrap_parse<T>(r: Result<Option<T>>) -> T {
+    fn unwrap_parse<T>(r: Result<Option<T>>) -> T
+    where
+        T: Debug,
+    {
         let Ok(Some(thing)) = r else {
-            panic!("parse failed");
+            panic!("parse failed: {:?}", r);
         };
 
         thing
@@ -1479,22 +1476,22 @@ mod tests {
 
         let alt = get_alternation(p.parse_expr());
         assert_eq!(alt.items.len(), 4);
-        assert!(matches!(alt.items[0].kind, ExprKind::Literal('a')));
-        assert!(matches!(alt.items[1].kind, ExprKind::Concatenation(_)));
-        assert!(matches!(alt.items[2].kind, ExprKind::Group(_)));
-        assert!(matches!(alt.items[3].kind, ExprKind::Empty));
+        assert_kind!(alt.items[0], ExprKind::Literal('a'));
+        assert_kind!(alt.items[1], ExprKind::Concatenation(_));
+        assert_kind!(alt.items[2], ExprKind::Group(_));
+        assert_kind!(alt.items[3], ExprKind::Empty);
 
         let ExprKind::Concatenation(Concatenation { items, .. }) = &alt.items[1].kind else {
             panic!("not a concatenation");
         };
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0].kind, ExprKind::Literal('b')));
-        assert!(matches!(items[1].kind, ExprKind::Literal('c')));
+        assert_kind!(items[0], ExprKind::Literal('b'));
+        assert_kind!(items[1], ExprKind::Literal('c'));
 
         let ExprKind::Group(Group { kind: GroupKind::Capturing(group), .. }) = &alt.items[2].kind else {
             panic!("not a group");
         };
-        assert!(matches!(group.expr.kind, ExprKind::Empty));
+        assert_kind!(group.expr, ExprKind::Empty);
     }
 
     #[test]
@@ -1509,10 +1506,9 @@ mod tests {
 
         let concat = get_concatenation(p.parse_concatenation());
         assert_eq!(concat.items.len(), 3);
-        println!("item: {}", stringify!(concat.items[0].kind));
-        assert!(matches!(concat.items[0].kind, ExprKind::Literal('a')));
-        assert!(matches!(concat.items[1].kind, ExprKind::Literal('b')));
-        assert!(matches!(concat.items[2].kind, ExprKind::Group(_)));
+        assert_kind!(concat.items[0], ExprKind::Literal('a'));
+        assert_kind!(concat.items[1], ExprKind::Literal('b'));
+        assert_kind!(concat.items[2], ExprKind::Group(_));
         let ExprKind::Group(Group { kind: GroupKind::Capturing(group), .. }) = &concat.items[2].kind else {
             panic!("not a group");
         };
@@ -1657,34 +1653,34 @@ mod tests {
         ]));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Any));
+        assert_kind!(expr, ExprKind::Any);
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Literal('a')));
+        assert_kind!(expr, ExprKind::Literal('a'));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Boundary(_)));
+        assert_kind!(expr, ExprKind::Boundary(_));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Group(_)));
+        assert_kind!(expr, ExprKind::Group(_));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Digit(true)));
+        assert_kind!(expr, ExprKind::Digit(true));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Whitespace(false)));
+        assert_kind!(expr, ExprKind::Whitespace(false));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::WordChar(true)));
+        assert_kind!(expr, ExprKind::WordChar(true));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Class(_)));
+        assert_kind!(expr, ExprKind::Class(_));
 
         let expr = unwrap_parse(p.parse_item());
-        assert!(matches!(expr.kind, ExprKind::Class(_)));
+        assert_kind!(expr, ExprKind::Class(_));
 
         let res = p.parse_item();
-        assert!(matches!(res, Ok(None)));
+        assert_err!(res, ErrorKind::UnexpectedToken(TokenKind::Star, _));
     }
 
     #[test]
@@ -1729,7 +1725,10 @@ mod tests {
             TokenKind::Literal('a'),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
+            TokenKind::OpenGroupOptions,
+            TokenKind::OpenGroupName,
             TokenKind::Name("name".to_string()),
+            TokenKind::CloseGroupName,
             TokenKind::Literal('b'),
             TokenKind::CloseGroup,
             TokenKind::OpenGroup,
@@ -1752,30 +1751,32 @@ mod tests {
             TokenKind::Flag(Flag::IgnoreWhitespace),
             TokenKind::CloseGroup,
             TokenKind::Literal('e'),
+            TokenKind::OpenGroup,
+            TokenKind::CloseGroup,
         ]));
 
         let group = get_group(p.parse_group());
-        assert!(matches!(group.kind, GroupKind::Capturing(_)));
+        assert_kind!(group, GroupKind::Capturing(_));
 
         let group = get_group(p.parse_group());
-        assert!(matches!(group.kind, GroupKind::Named(_)));
+        assert_kind!(group, GroupKind::Named(_));
 
         let group = get_group(p.parse_group());
-        assert!(matches!(group.kind, GroupKind::NonCapturing(_)));
+        assert_kind!(group, GroupKind::NonCapturing(_));
         let GroupKind::NonCapturing(NonCapturingGroup { flags, .. }) = group.kind else {
             panic!("not a non-capturing group");
         };
         assert!(flags.is_none());
 
         let group = get_group(p.parse_group());
-        assert!(matches!(group.kind, GroupKind::NonCapturing(_)));
+        assert_kind!(group, GroupKind::NonCapturing(_));
         let GroupKind::NonCapturing(NonCapturingGroup { flags, .. }) = group.kind else {
             panic!("not a non-capturing group");
         };
         assert!(flags.is_some());
 
         let group = get_group(p.parse_group());
-        assert!(matches!(group.kind, GroupKind::Flags(_)));
+        assert_kind!(group, GroupKind::Flags(_));
 
         let res = p.parse_group();
         assert!(matches!(res, Ok(None)));
@@ -1828,24 +1829,7 @@ mod tests {
         };
 
         assert!(flags.is_none());
-        assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
-
-        let mut p = Parser::new(token_iter(vec![
-            TokenKind::OpenGroupOptions,
-            TokenKind::CloseGroupOptions,
-            TokenKind::Literal('a'),
-            TokenKind::Literal('b'),
-            TokenKind::Literal('c'),
-        ]));
-
-        let res = p.parse_group_with_header();
-        assert!(matches!(
-            res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::Literal('a'), ..),
-                ..
-            })
-        ));
+        assert_kind!(expr, ExprKind::Concatenation(_));
     }
 
     #[test]
@@ -1875,26 +1859,7 @@ mod tests {
             flags.as_ref().unwrap().clear_flags,
             vec![FlagKind::IgnoreWhitespace]
         );
-        assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
-
-        let mut p = Parser::new(token_iter(vec![
-            TokenKind::OpenGroupOptions,
-            TokenKind::Flag(Flag::CaseInsensitive),
-            TokenKind::FlagDelimiter,
-            TokenKind::Flag(Flag::IgnoreWhitespace),
-            TokenKind::Literal('a'),
-            TokenKind::Literal('b'),
-            TokenKind::Literal('c'),
-        ]));
-
-        let res = p.parse_group_with_header();
-        assert!(matches!(
-            res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::Literal('a'), ..),
-                ..
-            })
-        ));
+        assert_kind!(expr, ExprKind::Concatenation(_));
     }
 
     #[test]
@@ -1904,7 +1869,6 @@ mod tests {
             TokenKind::OpenGroupName,
             TokenKind::Name("name".to_string()),
             TokenKind::CloseGroupName,
-            TokenKind::CloseGroupOptions,
             TokenKind::Literal('a'),
             TokenKind::Literal('b'),
             TokenKind::Literal('b'),
@@ -1916,23 +1880,21 @@ mod tests {
         };
 
         assert_eq!(name.value, "name".to_string());
-        assert!(matches!(expr.kind, ExprKind::Concatenation(_)));
+        assert_kind!(expr, ExprKind::Concatenation(_));
 
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenGroupOptions,
             TokenKind::OpenGroupName,
             TokenKind::Name("name".to_string()),
+            TokenKind::CloseGroupName,
             TokenKind::CloseGroupOptions,
         ]));
 
         let res = p.parse_group_with_header();
-        assert!(matches!(
+        assert_err!(
             res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::CloseGroupOptions, ..),
-                ..
-            })
-        ));
+            ErrorKind::UnexpectedToken(TokenKind::CloseGroupOptions, _)
+        );
 
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenGroupOptions,
@@ -1941,13 +1903,7 @@ mod tests {
         ]));
 
         let res = p.parse_group_with_header();
-        assert!(matches!(
-            res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedEOF(_),
-                ..
-            })
-        ));
+        assert_err!(res, ErrorKind::UnexpectedEOF(_));
     }
 
     #[test]
@@ -1985,13 +1941,10 @@ mod tests {
         ]));
 
         let res = p.parse_group_with_header();
-        assert!(matches!(
+        assert_err!(
             res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::FlagDelimiter, ..),
-                ..
-            })
-        ));
+            ErrorKind::UnexpectedToken(TokenKind::FlagDelimiter, ..)
+        );
     }
 
     #[test]
@@ -2091,9 +2044,10 @@ mod tests {
     fn unicode_class() {
         let mut p = Parser::new(token_iter(vec![
             TokenKind::UnicodeShort('L', false),
-            TokenKind::UnicodeLongStart(false),
-            TokenKind::UnicodePropValue("Letter".to_string()),
-            TokenKind::UnicodeLongEnd,
+            TokenKind::UnicodeLong(false),
+            TokenKind::OpenBrace,
+            TokenKind::Name("Letter".to_string()),
+            TokenKind::CloseBrace,
             TokenKind::Literal('\x5A'),
         ]));
 
@@ -2114,9 +2068,10 @@ mod tests {
         let mut p = Parser::new(token_iter(vec![
             TokenKind::UnicodeShort('L', false),
             TokenKind::UnicodeShort('L', true),
-            TokenKind::UnicodeLongStart(false),
-            TokenKind::UnicodePropValue("Letter".to_string()),
-            TokenKind::UnicodeLongEnd,
+            TokenKind::UnicodeLong(false),
+            TokenKind::OpenBrace,
+            TokenKind::Name("Letter".to_string()),
+            TokenKind::CloseBrace,
         ]));
 
         let class = get_class(p.parse_unicode_short_class());
@@ -2136,27 +2091,34 @@ mod tests {
     #[test]
     fn unicode_long_class() {
         let mut p = Parser::new(token_iter(vec![
-            TokenKind::UnicodeLongStart(false),
-            TokenKind::UnicodePropValue("Letter".to_string()),
-            TokenKind::UnicodeLongEnd,
-            TokenKind::UnicodeLongStart(true),
-            TokenKind::UnicodePropValue("Digit".to_string()),
-            TokenKind::UnicodeLongEnd,
-            TokenKind::UnicodeLongStart(false),
-            TokenKind::UnicodePropName("sc".to_string()),
-            TokenKind::UnicodeEqual(true),
-            TokenKind::UnicodePropValue("Greek".to_string()),
-            TokenKind::UnicodeLongEnd,
-            TokenKind::UnicodeLongStart(true),
-            TokenKind::UnicodePropName("sc".to_string()),
-            TokenKind::UnicodeEqual(false),
-            TokenKind::UnicodePropValue("Greek".to_string()),
-            TokenKind::UnicodeLongEnd,
-            TokenKind::UnicodeLongStart(true),
-            TokenKind::UnicodePropName("sc".to_string()),
-            TokenKind::UnicodeEqual(true),
-            TokenKind::UnicodePropValue("Greek".to_string()),
-            TokenKind::UnicodeLongEnd,
+            TokenKind::UnicodeLong(false),
+            TokenKind::OpenBrace,
+            TokenKind::Name("Letter".to_string()),
+            TokenKind::CloseBrace,
+            TokenKind::UnicodeLong(true),
+            TokenKind::OpenBrace,
+            TokenKind::Name("Digit".to_string()),
+            TokenKind::CloseBrace,
+            TokenKind::UnicodeLong(false),
+            TokenKind::OpenBrace,
+            TokenKind::Name("sc".to_string()),
+            TokenKind::Bang,
+            TokenKind::Equal,
+            TokenKind::Name("Greek".to_string()),
+            TokenKind::CloseBrace,
+            TokenKind::UnicodeLong(true),
+            TokenKind::OpenBrace,
+            TokenKind::Name("sc".to_string()),
+            TokenKind::Equal,
+            TokenKind::Name("Greek".to_string()),
+            TokenKind::CloseBrace,
+            TokenKind::UnicodeLong(true),
+            TokenKind::OpenBrace,
+            TokenKind::Name("sc".to_string()),
+            TokenKind::Bang,
+            TokenKind::Equal,
+            TokenKind::Name("Greek".to_string()),
+            TokenKind::CloseBrace,
             TokenKind::UnicodeShort('L', true),
         ]));
 
@@ -2282,7 +2244,9 @@ mod tests {
             TokenKind::Whitespace(false),
             TokenKind::WordChar(false),
             TokenKind::OpenBracket,
-            TokenKind::ClassName("alpha".to_string(), false),
+            TokenKind::Colon,
+            TokenKind::Name("alpha".to_string()),
+            TokenKind::Colon,
             TokenKind::CloseBracket,
             TokenKind::OpenBracket,
             TokenKind::Literal('a'),
@@ -2353,7 +2317,10 @@ mod tests {
     fn class_term_bracket() {
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenBracket,
-            TokenKind::ClassName("xdigit".to_string(), false),
+            TokenKind::Colon,
+            TokenKind::Negated,
+            TokenKind::Name("xdigit".to_string()),
+            TokenKind::Colon,
             TokenKind::CloseBracket,
             TokenKind::OpenBracket,
             TokenKind::Literal('a'),
@@ -2368,6 +2335,7 @@ mod tests {
             spec.kind,
             ClassSpecKind::Posix(PosixClass {
                 kind: PosixKind::XDigit,
+                negated: true,
                 ..
             })
         ));

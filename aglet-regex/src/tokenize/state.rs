@@ -89,7 +89,7 @@ impl fmt::Debug for StateStack {
 pub enum State {
     #[default]
     Main,
-    Group,
+    GroupOptions,
     Class,
     ClassName,
     Range,

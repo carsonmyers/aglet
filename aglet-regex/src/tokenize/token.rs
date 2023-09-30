@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 
-use aglet_text::{Cursor, Span};
+use aglet_text::Span;
 
 use crate::tokenize::error::{Error, ErrorKind};
 use crate::tokenize::state::StateStack;
@@ -18,6 +18,15 @@ impl fmt::Debug for Token {
             .field(&self.span)
             .field(&self.kind)
             .finish()
+    }
+}
+
+impl Token {
+    pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
+        Self {
+            span: Span::new(start, end),
+            kind
+        }
     }
 }
 
@@ -174,12 +183,6 @@ pub enum TokenKind {
     /// End of group name `>` in e.g. `(?<name>...)`
     CloseGroupName,
 
-    /// Group or class name
-    ///
-    /// # Items
-    ///
-    /// * `0` - group name
-    Name(String),
 
     /// Flags in group options or a non-capturing flags group (e.g. `(?i-x)`)
     Flag(Flag),
@@ -195,6 +198,9 @@ pub enum TokenKind {
     /// Close bracket `]` ending a specified character class or a posix class
     /// (e.g. `[a-z]`, `[[:alpha:]]`)
     CloseBracket,
+
+    /// Surrounding token `:` for named posix classes (e.g. `[[:alpha:]]`)
+    Colon,
 
     /// Negation marker `^` negating a specified character class or a posix class
     /// (e.g. `[^a-z]`, `[[:^alpha:]]`)
@@ -221,49 +227,27 @@ pub enum TokenKind {
     /// * `1` - whether the class is negated
     UnicodeShort(char, bool),
 
-    /// Beginning of a long unicode character class specifier `\u{`--or negated as `\U{`--to
-    /// be matched (not available in specified character classes). e.g. `\u{sc=Greek}`
+    /// Beginning of a long unicode character class specifier `\p{`--or negated as `\P{`--to
+    /// be matched (not available in specified character classes). e.g. `\p{sc=Greek}`
     ///
     /// # Items
     ///
     /// * `0` - whether the class is negated
-    UnicodeLongStart(bool),
+    UnicodeLong(bool),
 
-    /// End of a long unicode character class specifier `}` (e.g. `\u{sc=Greek}`)
-    UnicodeLongEnd,
+    /// Equal sign `=` in a unicode class specifier (e.g. `\u{sc=Greek}`)
+    Equal,
 
-    /// Property name for a long unicode class specifier, appearing on the left side of
-    /// the equal (or unequal) sign if present (e.g. `\u{Script=Greek}`)
+    /// Negation operator in a unicode class specifier (e.g. `\u{sc!=Greek}`)
+    Bang,
+
+    // General ==================================================
+    /// Group and class names, and unicode property names and values
     ///
     /// # Items
     ///
-    /// * `0` - property name
-    UnicodePropName(String),
-
-    /// Equal sign `=`--or negated as `!=`--for a long unicode class specifier
-    /// (e.g. `\u{sc!=Greek}`)
-    ///
-    /// # Items
-    ///
-    /// * `0` - whether the equals sign is negated
-    UnicodeEqual(bool),
-
-    /// Property value for a long unicode class specifier, appearing on the right side
-    /// of the equal (or unequal) sign if present, or as the only token within the
-    /// start- and end-tokens (e.g. `\u{sc=Greek}`).
-    ///
-    /// # Items
-    ///
-    /// * `0` - property value
-    UnicodePropValue(String),
-
-    /// Name of a posix character class (e.g. `[[:alpha:]]`, negated as `[[:^alpha:]]`)
-    ///
-    /// # Items
-    ///
-    /// * `0` - class name
-    /// * `1` - whether the class is negated
-    ClassName(String, bool),
+    /// * `0` - name
+    Name(String),
 
     /// Error generated during tokenization
     ///
@@ -413,11 +397,6 @@ impl TokenKind {
     }
 
     #[inline]
-    pub fn is_name(&self) -> bool {
-        matches!(self, TokenKind::Name(_))
-    }
-
-    #[inline]
     pub fn is_flag(&self) -> bool {
         matches!(self, TokenKind::Flag(_))
     }
@@ -440,6 +419,11 @@ impl TokenKind {
     #[inline]
     pub fn is_close_bracket(&self) -> bool {
         matches!(self, TokenKind::CloseBracket)
+    }
+
+    #[inline]
+    pub fn is_colon(&self) -> bool {
+        matches!(self, TokenKind::Colon)
     }
 
     #[inline]
@@ -483,33 +467,23 @@ impl TokenKind {
     }
 
     #[inline]
-    pub fn is_unicode_long_start(&self) -> bool {
-        matches!(self, TokenKind::UnicodeLongStart(_))
+    pub fn is_unicode_long(&self) -> bool {
+        matches!(self, TokenKind::UnicodeLong(_))
     }
 
     #[inline]
-    pub fn is_unicode_long_end(&self) -> bool {
-        matches!(self, TokenKind::UnicodeLongEnd)
+    pub fn is_bang(&self) -> bool {
+        matches!(self, TokenKind::Bang)
     }
 
     #[inline]
-    pub fn is_unicode_prop_name(&self) -> bool {
-        matches!(self, TokenKind::UnicodePropName(_))
+    pub fn is_equal(&self) -> bool {
+        matches!(self, TokenKind::Equal)
     }
 
     #[inline]
-    pub fn is_unicode_equal(&self) -> bool {
-        matches!(self, TokenKind::UnicodeEqual(_))
-    }
-
-    #[inline]
-    pub fn is_unicode_prop_value(&self) -> bool {
-        matches!(self, TokenKind::UnicodePropValue(_))
-    }
-
-    #[inline]
-    pub fn is_class_name(&self) -> bool {
-        matches!(self, TokenKind::ClassName(_, _))
+    pub fn is_name(&self) -> bool {
+        matches!(self, TokenKind::Name(_))
     }
 
     #[inline]

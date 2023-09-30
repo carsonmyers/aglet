@@ -7,11 +7,12 @@ use crate::Error;
 
 pub type FileId = u32;
 
+#[derive(Debug, Clone)]
 pub struct SourceFile {
-    pub prefix:   String,
+    pub prefix: String,
     pub filename: String,
-    pub src:      String,
-    pub lines:    Vec<usize>,
+    pub src: String,
+    pub lines: Vec<usize>,
 }
 
 impl SourceFile {
@@ -48,53 +49,45 @@ impl SourceFile {
         }
     }
 
+    pub fn file_position_from_offset(&self, offset: &usize) -> Option<FilePosition> {
+        self.lines
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, start_offset)| start_offset <= &offset)
+            .map(|(line, start_offset)| FilePosition {
+                offset: *offset,
+                line: line + 1,
+                column: offset - start_offset + 1,
+            })
+    }
+
     fn map_lines(src: &str) -> Vec<usize> {
         src.lines()
             .scan(0, |state, line| {
                 let res = Some(*state);
-                *state = *state + line.len();
+                *state = *state + line.len() + 1;
                 res
             })
             .collect()
     }
-
-    fn file_position_from_offset(&self, offset: &usize) -> Option<FilePosition> {
-        self.lines
-            .iter()
-            .enumerate()
-            .find(|(_, start_offset)| start_offset <= &offset)
-            .map(|(line, start_offset)| FilePosition {
-                offset: *offset,
-                line:   line,
-                column: offset - start_offset,
-            })
-    }
 }
 
+#[derive(Debug, Clone)]
 pub struct SourceMap {
     next_id: FileId,
-    files:   HashMap<FileId, SourceFile>,
+    files: HashMap<FileId, SourceFile>,
 }
 
 impl SourceMap {
     pub fn new() -> Self {
         Self {
             next_id: 0,
-            files:   HashMap::new(),
+            files: HashMap::new(),
         }
     }
 
-    pub fn add_file(&mut self, path: &Path) -> Result<FileId, Error> {
-        let file = SourceFile::load_file(path)?;
-        let id = self.next_id;
-        self.next_id += 1;
-
-        self.files.insert(id, file);
-        Ok(id)
-    }
-
-    pub fn add_source(&mut self, filename: String, src: String) -> FileId {
-        let file = SourceFile::new_from_source(String::new(), filename, src);
+    pub fn add_file(&mut self, file: SourceFile) -> FileId {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -112,5 +105,57 @@ impl SourceMap {
             start,
             end,
         })
+    }
+
+    pub fn get_file(&self, file_id: &FileId) -> Option<&SourceFile> {
+        self.files.get(file_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_file_init() {
+        let input = vec!["abcd", "", "efgh"].join("\n");
+        let file =
+            SourceFile::new_from_source("<test>".to_string(), "test_file".to_string(), input.clone());
+
+        assert_eq!(file.prefix, "<test>".to_string());
+        assert_eq!(file.filename, "test_file".to_string());
+        assert_eq!(file.src, input);
+        assert_eq!(file.lines, vec![0, 5, 6]);
+    }
+
+    #[test]
+    fn test_file_positions() {
+        let input = vec![
+            "01234", // 0-5
+            "67", // 6-8
+            "", // 9
+            "012", // 10-12
+        ].join("\n");
+        let file = SourceFile::new_from_source("".to_string(), "<test>".to_string(), input);
+
+        let pos = file.file_position_from_offset(&3).expect("pos in bounds");
+        assert_eq!(pos.offset, 3);
+        assert_eq!(pos.line, 1);
+        assert_eq!(pos.column, 4);
+
+        let pos = file.file_position_from_offset(&5).expect("pos in bounds");
+        assert_eq!(pos.offset, 5);
+        assert_eq!(pos.line, 1);
+        assert_eq!(pos.column, 6);
+
+        let pos = file.file_position_from_offset(&7).expect("pos in bounds");
+        assert_eq!(pos.offset, 7);
+        assert_eq!(pos.line, 2);
+        assert_eq!(pos.column, 2);
+
+        let pos = file.file_position_from_offset(&11).expect("pos in bounds");
+        assert_eq!(pos.offset, 11);
+        assert_eq!(pos.line, 4);
+        assert_eq!(pos.column, 2);
     }
 }

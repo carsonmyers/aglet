@@ -23,7 +23,7 @@ const PARAMETER_COLOR: Color = Color::TrueColor {
 ///
 /// An alternation node with two literal children might be printed like this:
 ///
-/// ```ignore
+/// ```ast
 /// (Alternation
 ///     (Literal value='a')
 ///     (Literal value='b'))
@@ -231,22 +231,21 @@ mod tests {
     fn print_ast() {
         // 10 + -1 + 6
         // 0   4   8
-
         let expr = Expr {
             kind: ExprKind::Add(Add {
-                span:  Span::from_offsets(0, 11),
+                span:  Span::new(0, 11),
                 left:  Box::new(Expr {
                     kind: ExprKind::Add(Add {
-                        span:  Span::from_offsets(0, 7),
+                        span:  Span::new(0, 7),
                         left:  Box::new(Expr {
                             kind: ExprKind::Number(Number {
-                                span:  Span::from_offsets(0, 2),
+                                span:  Span::new(0, 2),
                                 value: 10,
                             }),
                         }),
                         right: Box::new(Expr {
                             kind: ExprKind::Number(Number {
-                                span:  Span::from_offsets(5, 7),
+                                span:  Span::new(5, 7),
                                 value: -1,
                             }),
                         }),
@@ -254,7 +253,7 @@ mod tests {
                 }),
                 right: Box::new(Expr {
                     kind: ExprKind::Number(Number {
-                        span:  Span::from_offsets(10, 11),
+                        span:  Span::new(10, 11),
                         value: 6,
                     }),
                 }),
@@ -269,16 +268,16 @@ mod tests {
         );
 
         let expected = concat!(
-            "1:1[0] - 1:12[11]:\t(Add\n",
-            "1:1[0] - 1:8[7]:\t  (Add\n",
-            "1:1[0] - 1:3[2]:\t    (Number value=10)\n",
-            "1:6[5] - 1:8[7]:\t    (Number value=-1))\n",
-            "1:11[10] - 1:12[11]:\t  (Number value=6))"
+            "0 - 11:\t(Add\n",
+            "0 - 7:\t  (Add\n",
+            "0 - 2:\t    (Number value=10)\n",
+            "5 - 7:\t    (Number value=-1))\n",
+            "10 - 11:\t  (Number value=6))"
         );
 
         let out = printer.print(&expr).expect("print failed").finish();
         assert!(out.is_ok());
         let out = out.unwrap();
-        assert_eq!(out, expected);
+        assert_eq!(expected, out);
     }
 }

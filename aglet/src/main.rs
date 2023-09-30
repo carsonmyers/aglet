@@ -44,31 +44,46 @@ fn main() -> Result<()> {
 
 pub struct Input {
     input:    CliInput,
+    filename: String,
     is_stdin: bool,
 }
 
 impl Input {
     pub fn new(input_path: Option<PathBuf>) -> Result<Self> {
-        let (input, is_stdin) = if let Some(input_path) = input_path {
-            let file = File::open(input_path)?;
+        let input = if let Some(input_path) = input_path {
+            let file = File::open(input_path.clone())?;
             let iter = io::BufReader::new(file)
                 .lines()
                 .map(|res| res.map_err(|err| err.into()));
 
-            (Box::new(iter) as CliInput, false)
+            Self {
+                input: Box::new(iter) as CliInput,
+                filename: input_path.to_string_lossy().to_string(),
+                is_stdin: false,
+            }
         } else {
             let iter = std::io::stdin()
                 .lines()
                 .map(|res| res.map_err(|err| err.into()));
 
-            (Box::new(iter) as CliInput, true)
+            Self {
+                input: Box::new(iter) as CliInput,
+                filename: "<stdin>".to_string(),
+                is_stdin: true
+            }
         };
 
-        Ok(Self { input, is_stdin })
+        Ok(input)
     }
 
+    #[inline]
     pub fn is_stdin(&self) -> bool {
         self.is_stdin
+    }
+
+    #[inline]
+    pub fn filename(&self) -> &str {
+        &self.filename
     }
 }
 

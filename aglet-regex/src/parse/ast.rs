@@ -5,18 +5,18 @@ use aglet_text::Span;
 use crate::parse::error::TokenConvertError;
 use crate::tokenize::{self, TokenKind};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Ast {
     pub head: Expr,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum ExprKind {
     Alternation(Alternation),
     Concatenation(Concatenation),
@@ -33,22 +33,26 @@ pub enum ExprKind {
     Empty,
 }
 
+#[derive(Debug)]
 pub struct Alternation {
     pub span:  Span,
     pub items: Vec<Expr>,
 }
 
+#[derive(Debug)]
 pub struct Concatenation {
     pub span:  Span,
     pub items: Vec<Expr>,
 }
 
+#[derive(Debug)]
 pub struct Repetition {
     pub span: Span,
     pub kind: RepetitionKind,
     pub item: Box<Expr>,
 }
 
+#[derive(Debug)]
 pub enum RepetitionKind {
     ZeroOrOne,
     ZeroOrMore,
@@ -69,12 +73,14 @@ impl TryFrom<TokenKind> for RepetitionKind {
     }
 }
 
+#[derive(Debug)]
 pub struct Range {
     pub span:  Span,
     pub start: Option<usize>,
     pub end:   Option<usize>,
 }
 
+#[derive(Debug)]
 pub struct Boundary {
     pub span: Span,
     pub kind: BoundaryKind,
@@ -106,11 +112,13 @@ impl TryFrom<TokenKind> for BoundaryKind {
     }
 }
 
+#[derive(Debug)]
 pub struct Group {
     pub span: Span,
     pub kind: GroupKind,
 }
 
+#[derive(Debug)]
 pub enum GroupKind {
     Capturing(CapturingGroup),
     Named(NamedGroup),
@@ -118,28 +126,33 @@ pub enum GroupKind {
     Flags(FlagGroup),
 }
 
+#[derive(Debug)]
 pub struct CapturingGroup {
     pub span:  Span,
     pub index: usize,
     pub expr:  Box<Expr>,
 }
 
+#[derive(Debug)]
 pub struct NamedGroup {
     pub span: Span,
     pub name: StringSpan,
     pub expr: Box<Expr>,
 }
 
+#[derive(Debug)]
 pub struct NonCapturingGroup {
     pub span:  Span,
     pub flags: Option<Flags>,
     pub expr:  Box<Expr>,
 }
 
+#[derive(Debug)]
 pub struct FlagGroup {
     pub flags: Flags,
 }
 
+#[derive(Debug)]
 pub struct Flags {
     pub span:        Span,
     pub set_flags:   Vec<FlagKind>,
@@ -172,33 +185,39 @@ impl From<tokenize::Flag> for FlagKind {
     }
 }
 
+#[derive(Debug)]
 pub struct Class {
     pub span:    Span,
     pub negated: bool,
     pub kind:    ClassKind,
 }
 
+#[derive(Debug)]
 pub enum ClassKind {
     Unicode(UnicodeClass),
     Specified(SpecifiedClass),
 }
 
+#[derive(Debug)]
 pub struct UnicodeClass {
     pub span:  Span,
     pub name:  Option<StringSpan>,
     pub value: StringSpan,
 }
 
+#[derive(Debug)]
 pub struct SpecifiedClass {
     pub span:  Span,
     pub items: Vec<ClassSpec>,
 }
 
+#[derive(Debug)]
 pub struct ClassSpec {
     pub span: Span,
     pub kind: ClassSpecKind,
 }
 
+#[derive(Debug)]
 pub enum ClassSpecKind {
     Intersection(Intersection),
     Difference(Difference),
@@ -212,24 +231,28 @@ pub enum ClassSpecKind {
     Class(Class),
 }
 
+#[derive(Debug)]
 pub struct Intersection {
     pub span:  Span,
     pub left:  Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
+#[derive(Debug)]
 pub struct Difference {
     pub span:  Span,
     pub left:  Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
+#[derive(Debug)]
 pub struct Symmetrical {
     pub span:  Span,
     pub left:  Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
+#[derive(Debug)]
 pub struct PosixClass {
     pub span: Span,
     pub kind: PosixKind,
@@ -278,6 +301,7 @@ impl TryFrom<&str> for PosixKind {
     }
 }
 
+#[derive(Debug)]
 pub struct StringSpan {
     pub span:  Span,
     pub value: String,

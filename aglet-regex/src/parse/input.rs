@@ -26,14 +26,6 @@ impl<'a> Input<'a> {
         self.span.end
     }
 
-    pub fn peek(&mut self) -> Option<Result<&Token>> {
-        match self.data.peek() {
-            None => None,
-            Some(Ok(tok)) => Some(Ok(tok)),
-            Some(Err(err)) => Some(Err(Error::from(err.clone()))),
-        }
-    }
-
     pub fn peek_kind(&mut self) -> Option<Result<&TokenKind>> {
         match self.data.peek() {
             None => None,

@@ -22,7 +22,7 @@ const PARAMETER_COLOR: Color = Color::TrueColor {
 ///
 /// A literal token might be printed like this:
 ///
-/// ```ignore
+/// ```tok
 /// [Literal value='a']
 /// ```
 pub struct TokenPrinter<'a, 'b: 'a> {
