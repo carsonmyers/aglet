@@ -8,12 +8,6 @@ const COLOR_REPETITION: Option<Color> = Some(Color::Cyan);
 const COLOR_MATCH_ONE: Option<Color> = Some(Color::Green);
 const COLOR_CLASS_ITEM: Option<Color> = Some(Color::BrightYellow);
 
-impl Pretty for Ast {
-    fn print(&self, w: &mut Writer<'_>) -> Result {
-        w.print(&self.head)
-    }
-}
-
 impl Pretty for Expr {
     fn print(&self, w: &mut Writer<'_>) -> Result {
         match &self.kind {
@@ -149,6 +143,7 @@ impl Pretty for GroupKind {
             Self::Named(named) => w.print(named),
             Self::NonCapturing(non_capturing) => w.print(non_capturing),
             Self::Flags(flags) => w.print(flags),
+            Self::Empty => w.print_ast("Group", None, None).finish(),
         }
     }
 }
@@ -309,6 +304,7 @@ impl Pretty for ClassSpecKind {
                 .finish(),
             Self::Posix(posix) => w.print(posix),
             Self::Class(class) => w.print(class),
+            Self::Empty => w.print_ast("Empty", None, COLOR_CLASS_ITEM).finish(),
         }
     }
 }

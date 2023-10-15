@@ -3,7 +3,7 @@ pub mod parse;
 pub mod tokenize;
 
 pub use error::Error;
-pub use parse::{ast::Ast, Parser};
+pub use parse::{Parser, ast::ParseResult};
 pub use tokenize::{Token, Tokenizer};
 
 pub fn tokenize<S: AsRef<str>>(input: &str) -> Result<Vec<Token>, tokenize::Error> {
@@ -11,7 +11,7 @@ pub fn tokenize<S: AsRef<str>>(input: &str) -> Result<Vec<Token>, tokenize::Erro
     tr.collect::<Result<Vec<_>, _>>()
 }
 
-pub fn parse<S: AsRef<str>>(input: &str) -> Result<Ast, parse::Error> {
+pub fn parse<S: AsRef<str>>(input: &str) -> ParseResult {
     let tr = Tokenizer::new(input);
     let p = Parser::new(tr);
     p.parse()

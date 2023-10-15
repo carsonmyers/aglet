@@ -8,5 +8,6 @@ proc-macro = true
 
 [dependencies]
 aglet-pretty = { path = "../aglet-pretty" }
-syn = "1.0"
+aglet-text = { path = "../aglet-text" }
+syn = { version = "2.0.37", features = ["derive"] }
 quote = "1.0"

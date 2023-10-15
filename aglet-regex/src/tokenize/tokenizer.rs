@@ -1,5 +1,4 @@
 use std::convert::TryInto;
-use std::iter;
 
 use aglet_text::Cursor;
 
@@ -906,7 +905,7 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-impl<'a> iter::Iterator for Tokenizer<'a> {
+impl<'a> Iterator for Tokenizer<'a> {
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {

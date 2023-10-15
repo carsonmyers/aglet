@@ -1,22 +1,10 @@
+mod default_with_span;
+
 use proc_macro::TokenStream;
-use quote::quote;
-use syn;
+use syn::{parse_macro_input, DeriveInput};
 
-#[proc_macro_derive(SpanPrinter)]
-pub fn span_printer_derive(input: TokenStream) -> TokenStream {
-    let ast = syn::parse(input).unwrap();
-    impl_span_printer_macro(&ast)
-}
-
-fn impl_span_printer_macro(ast: &syn::DeriveInput) -> TokenStream {
-    let name = &ast.ident;
-    let gen = quote! {
-        impl SpanPrinter for #name {
-            fn print_with_span(&self, source: &str) {
-                println!("hello, world!");
-            }
-        }
-    };
-
-    gen.into()
+#[proc_macro_derive(DefaultWithSpan)]
+pub fn default_with_span(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    default_with_span::impl_default_with_span(input)
 }

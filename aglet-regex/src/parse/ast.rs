@@ -1,22 +1,25 @@
 use std::convert::TryFrom;
+use std::default::Default;
 
+use aglet_derive::DefaultWithSpan;
 use aglet_text::Span;
 
-use crate::parse::error::TokenConvertError;
+use crate::parse::error;
 use crate::tokenize::{self, TokenKind};
 
-#[derive(Default, Debug)]
-pub struct Ast {
-    pub head: Expr,
+#[derive(Default, DefaultWithSpan, Debug)]
+pub struct ParseResult {
+    pub ast: Expr,
+    pub errors: Vec<error::Error>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub enum ExprKind {
     Alternation(Alternation),
     Concatenation(Concatenation),
@@ -33,15 +36,15 @@ pub enum ExprKind {
     Empty,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Alternation {
-    pub span:  Span,
+    pub span: Span,
     pub items: Vec<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Concatenation {
-    pub span:  Span,
+    pub span: Span,
     pub items: Vec<Expr>,
 }
 
@@ -61,23 +64,23 @@ pub enum RepetitionKind {
 }
 
 impl TryFrom<TokenKind> for RepetitionKind {
-    type Error = TokenConvertError;
+    type Error = error::TokenConvertError;
 
     fn try_from(value: TokenKind) -> Result<Self, Self::Error> {
         match value {
             TokenKind::Question => Ok(Self::ZeroOrOne),
             TokenKind::Star => Ok(Self::ZeroOrMore),
             TokenKind::Plus => Ok(Self::OneOrMore),
-            _ => Err(TokenConvertError::InvalidTokenForRepetition(value)),
+            _ => Err(error::TokenConvertError::InvalidTokenForRepetition(value)),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Range {
-    pub span:  Span,
+    pub span: Span,
     pub start: Option<usize>,
-    pub end:   Option<usize>,
+    pub end: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -97,7 +100,7 @@ pub enum BoundaryKind {
 }
 
 impl TryFrom<TokenKind> for BoundaryKind {
-    type Error = TokenConvertError;
+    type Error = error::TokenConvertError;
 
     fn try_from(value: TokenKind) -> Result<Self, Self::Error> {
         match value {
@@ -107,55 +110,57 @@ impl TryFrom<TokenKind> for BoundaryKind {
             TokenKind::EndOfText => Ok(Self::EndOfText),
             TokenKind::WordBoundary => Ok(Self::WordBoundary),
             TokenKind::NonWordBoundary => Ok(Self::NonWordBoundary),
-            _ => Err(TokenConvertError::InvalidTokenForBoundary(value)),
+            _ => Err(error::TokenConvertError::InvalidTokenForBoundary(value)),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Group {
     pub span: Span,
     pub kind: GroupKind,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub enum GroupKind {
     Capturing(CapturingGroup),
     Named(NamedGroup),
     NonCapturing(NonCapturingGroup),
     Flags(FlagGroup),
+    #[default]
+    Empty,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct CapturingGroup {
-    pub span:  Span,
+    pub span: Span,
     pub index: usize,
-    pub expr:  Box<Expr>,
+    pub expr: Box<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct NamedGroup {
     pub span: Span,
     pub name: StringSpan,
     pub expr: Box<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct NonCapturingGroup {
-    pub span:  Span,
+    pub span: Span,
     pub flags: Option<Flags>,
-    pub expr:  Box<Expr>,
+    pub expr: Box<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct FlagGroup {
     pub flags: Flags,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Flags {
-    pub span:        Span,
-    pub set_flags:   Vec<FlagKind>,
+    pub span: Span,
+    pub set_flags: Vec<FlagKind>,
     pub clear_flags: Vec<FlagKind>,
 }
 
@@ -171,7 +176,6 @@ pub enum FlagKind {
 }
 
 impl From<tokenize::Flag> for FlagKind {
-
     fn from(value: tokenize::Flag) -> Self {
         match value {
             tokenize::Flag::CaseInsensitive => Self::CaseInsensitive,
@@ -187,9 +191,9 @@ impl From<tokenize::Flag> for FlagKind {
 
 #[derive(Debug)]
 pub struct Class {
-    pub span:    Span,
+    pub span: Span,
     pub negated: bool,
-    pub kind:    ClassKind,
+    pub kind: ClassKind,
 }
 
 #[derive(Debug)]
@@ -198,26 +202,26 @@ pub enum ClassKind {
     Specified(SpecifiedClass),
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct UnicodeClass {
-    pub span:  Span,
-    pub name:  Option<StringSpan>,
+    pub span: Span,
+    pub name: Option<StringSpan>,
     pub value: StringSpan,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct SpecifiedClass {
-    pub span:  Span,
+    pub span: Span,
     pub items: Vec<ClassSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct ClassSpec {
     pub span: Span,
     pub kind: ClassSpecKind,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub enum ClassSpecKind {
     Intersection(Intersection),
     Difference(Difference),
@@ -229,37 +233,39 @@ pub enum ClassSpecKind {
     Range(char, char),
     Posix(PosixClass),
     Class(Class),
+    #[default]
+    Empty,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Intersection {
-    pub span:  Span,
-    pub left:  Box<ClassSpec>,
+    pub span: Span,
+    pub left: Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Difference {
-    pub span:  Span,
-    pub left:  Box<ClassSpec>,
+    pub span: Span,
+    pub left: Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct Symmetrical {
-    pub span:  Span,
-    pub left:  Box<ClassSpec>,
+    pub span: Span,
+    pub left: Box<ClassSpec>,
     pub right: Box<ClassSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct PosixClass {
     pub span: Span,
     pub kind: PosixKind,
     pub negated: bool,
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub enum PosixKind {
     AlNum,
     Alpha,
@@ -275,10 +281,12 @@ pub enum PosixKind {
     Upper,
     Word,
     XDigit,
+    #[default]
+    Unknown,
 }
 
 impl TryFrom<&str> for PosixKind {
-    type Error = TokenConvertError;
+    type Error = error::TokenConvertError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
@@ -296,13 +304,15 @@ impl TryFrom<&str> for PosixKind {
             "upper" => Ok(Self::Upper),
             "word" => Ok(Self::Word),
             "xdigit" => Ok(Self::XDigit),
-            _ => Err(TokenConvertError::InvalidPosixClass(value.to_string())),
+            _ => Err(error::TokenConvertError::InvalidPosixClass(
+                value.to_string(),
+            )),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, DefaultWithSpan, Debug)]
 pub struct StringSpan {
-    pub span:  Span,
+    pub span: Span,
     pub value: String,
 }

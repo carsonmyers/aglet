@@ -79,6 +79,7 @@ use crate::tokenize::{self, Token, TokenKind};
 pub struct Parser<'a> {
     input: Input<'a>,
     group_index: usize,
+    errors: Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
@@ -93,14 +94,19 @@ impl<'a> Parser<'a> {
         Parser {
             input: Input::new(input),
             group_index: 1,
+            errors: Vec::new(),
         }
     }
 
     /// Parse the regular expression into a [syntax tree](Ast)
-    pub fn parse(mut self) -> Result<Ast> {
-        Ok(Ast {
-            head: self.parse_expr()?,
-        })
+    pub fn parse(mut self) -> ParseResult {
+        let res = self.parse_expr();
+        let expr = self.ok_or_default(res);
+
+        ParseResult {
+            ast: expr,
+            errors: self.errors,
+        }
     }
 
     /// Parse an expression, starting with alternations as the weakest binding operation
@@ -172,7 +178,7 @@ impl<'a> Parser<'a> {
     ///
     /// ```grammar
     /// concatenation ->
-    ///     | repetition concatination?
+    ///     | repetition concatenation?
     /// ```
     pub fn parse_concatenation(&mut self) -> Result<Option<Expr>> {
         let mut items = Vec::new();
@@ -564,7 +570,7 @@ impl<'a> Parser<'a> {
     ///     | expr
     /// ```
     ///
-    /// [1]: crate::parse::Parser::parse_group
+    /// [1]: Parser::parse_group
     pub fn parse_group_contents(&mut self) -> Result<GroupKind> {
         let res = self
             .parse_alts(vec![
@@ -1035,7 +1041,7 @@ impl<'a> Parser<'a> {
     ///     | '&&' spec_item spec_set?
     /// ```
     ///
-    /// [1]: crate::parse::Parser::parse_specified_class
+    /// [1]: Parser::parse_specified_class
     pub fn parse_specified_class_item(&mut self) -> Result<Option<ClassSpec>> {
         let Some(term) = self.parse_specified_class_term()? else {
             return Ok(None)
@@ -1069,7 +1075,7 @@ impl<'a> Parser<'a> {
     ///     | '&&' spec_item spec_set?
     /// ```
     ///
-    /// [1]: crate::parse::Parser::parse_specified_class
+    /// [1]: Parser::parse_specified_class
     pub fn parse_specified_class_term(&mut self) -> Result<Option<ClassSpec>> {
         self.parse_alts(vec![
             Self::parse_class_term_literal,
@@ -1178,7 +1184,7 @@ impl<'a> Parser<'a> {
     ///     | '[' specified_class ']'
     /// ```
     ///
-    /// [1]: crate::parse::Parser::parse_specified_class
+    /// [1]: Parser::parse_specified_class
     pub fn parse_class_term_bracket(&mut self) -> Result<Option<ClassSpec>> {
         let Some(open_tok) = self.input.match_where(TokenKind::is_open_bracket)? else {
             return Ok(None);
@@ -1274,8 +1280,8 @@ impl<'a> Parser<'a> {
     ///     | '&&' spec_term spec_set?
     /// ```
     ///
-    /// [1]: crate::parse::ast::ClassSpec
-    /// [2]: crate::parse::Parser::parse_specified_class_item
+    /// [1]: ClassSpec
+    /// [2]: Parser::parse_specified_class_item
     pub fn parse_class_item_set(&mut self, start: ClassSpec) -> Result<ClassSpec> {
         // match a set operator to begin parsing the class spec. If none is found
         // then the left hand side will be returned unchanged.
@@ -1354,6 +1360,16 @@ impl<'a> Parser<'a> {
             None => Err(self
                 .input
                 .error(ErrorKind::UnexpectedEOF(expect.to_string()))),
+        }
+    }
+
+    fn ok_or_default<T: Default>(&mut self, res: Result<T>) -> T {
+        match res {
+            Ok(expr) => expr,
+            Err(e) => {
+                self.errors.push(e);
+                Default::default()
+            }
         }
     }
 }
