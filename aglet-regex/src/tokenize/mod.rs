@@ -12,10 +12,7 @@ pub use tokenizer::Tokenizer;
 macro_rules! assert_next_tok {
     ( $tokenizer:expr , $kind:pat ) => {
         let next = $tokenizer.next();
-        if !matches!(
-            next,
-            Some(Ok(Token { kind: $kind, .. }))
-        ) {
+        if !matches!(next, Some(Ok(Token { kind: $kind, .. }))) {
             panic!("{:?} does not match token {}", next, stringify!($kind));
         }
     };
@@ -25,13 +22,7 @@ macro_rules! assert_next_tok {
 macro_rules! assert_next_err {
     ( $tokenizer:expr , $kind:pat ) => {
         let next = $tokenizer.next();
-        if !matches!(
-            next,
-            Some(Err(Error { kind: $kind, .. }))
-        ) && !matches!(
-            next,
-            Some(Ok(Token { kind: TokenKind::Error(Error { kind: $kind, .. }), .. }))
-        ) {
+        if !matches!(next, Some(Err(Error { kind: $kind, .. }))) {
             panic!("{:?} does not match error {}", next, stringify!($kind));
         }
     };
@@ -54,8 +45,13 @@ pub(crate) fn assert_tokens(mut tr: Tokenizer, tokens: Vec<TokenKind>) {
     for (i, expected) in tokens.iter().enumerate() {
         let actual = tr
             .next()
-            .expect(&format!("ran out of tokens; expecting {:?} ({})", expected, i))
-            .unwrap_or_else(|err| panic!("received error {:?}; expecting {:?} ({})", err, expected, i))
+            .expect(&format!(
+                "ran out of tokens; expecting {:?} ({})",
+                expected, i
+            ))
+            .unwrap_or_else(|err| {
+                panic!("received error {:?}; expecting {:?} ({})", err, expected, i)
+            })
             .kind;
 
         assert_eq!(expected, &actual, "failed to match token {}", i);

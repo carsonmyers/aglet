@@ -252,10 +252,6 @@ impl Token {
                 )
                 .property(None, name, None)
                 .finish(),
-            TokenKind::Error(err) => w
-                .print_token("Error", Some(self.span), stack, COLOR_ERROR)
-                .property(None, err, None)
-                .finish(),
         }
     }
 }

@@ -248,13 +248,6 @@ pub enum TokenKind {
     ///
     /// * `0` - name
     Name(String),
-
-    /// Error generated during tokenization
-    ///
-    /// # Items
-    ///
-    /// * `0` - error that was generated
-    Error(Error),
 }
 
 impl TokenKind {
@@ -484,11 +477,6 @@ impl TokenKind {
     #[inline]
     pub fn is_name(&self) -> bool {
         matches!(self, TokenKind::Name(_))
-    }
-
-    #[inline]
-    pub fn is_error(&self) -> bool {
-        matches!(self, TokenKind::Error(_))
     }
 }
 

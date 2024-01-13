@@ -139,17 +139,21 @@ fn print_ast(section: &InputSection, printer_settings: PrettyPrintSettings) -> R
     let mut printer = PrettyPrinter::new(printer_settings);
 
     let tokens = Tokenizer::new(section.source.src.as_ref()).collect_vec();
-    match Parser::new(tokens.into_iter()).parse() {
-        Ok(ast) => println!("AST:\n{}\n", printer.print(&ast)?.finish()?),
-        Err(e) => println!("{:?}", e),
-    };
+    let parse_result = Parser::new(tokens.into_iter()).parse();
+    println!("AST:\n{}\n", printer.print(&parse_result.ast)?.finish()?);
+    if parse_result.errors.len() > 0 {
+        println!(
+            "PARSE ERR:\n{}\n",
+            parse_result.errors.into_iter().join("\n")
+        );
+    }
 
     Ok(())
 }
 
 struct InputSection {
     source: SourceFile,
-    tests: Vec<TestKind>,
+    tests:  Vec<TestKind>,
 }
 
 enum TestKind {
@@ -158,9 +162,9 @@ enum TestKind {
 }
 
 struct SectionIterator {
-    input: CliInput,
+    input:        CliInput,
     last_section: Option<InputSection>,
-    allow_tests: bool,
+    allow_tests:  bool,
 }
 
 impl SectionIterator {
@@ -222,7 +226,7 @@ impl SectionIterator {
     fn start_section(&mut self, input: String) -> Option<InputSection> {
         self.last_section.replace(InputSection {
             source: SourceFile::new_from_source("".to_string(), "<stdin>".to_string(), input),
-            tests: Vec::new(),
+            tests:  Vec::new(),
         })
     }
 }

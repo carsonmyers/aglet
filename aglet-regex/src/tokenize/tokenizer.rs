@@ -10,10 +10,10 @@ use crate::tokenize::{assert_next_err, assert_next_none, assert_next_tok};
 
 /// Tokenizer for a regular expression
 pub struct Tokenizer<'a> {
-    cursor: Cursor<'a>,
-    state: StateStack,
+    cursor:          Cursor<'a>,
+    state:           StateStack,
     last_token_kind: Option<TokenKind>,
-    is_eof: bool,
+    is_eof:          bool,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -33,10 +33,10 @@ impl<'a> Tokenizer<'a> {
     /// ```
     pub fn new<C: Into<Cursor<'a>>>(cursor: C) -> Self {
         Tokenizer {
-            cursor: cursor.into(),
-            state: StateStack::new(),
+            cursor:          cursor.into(),
+            state:           StateStack::new(),
             last_token_kind: None,
-            is_eof: false,
+            is_eof:          false,
         }
     }
 
@@ -167,13 +167,9 @@ impl<'a> Tokenizer<'a> {
             Err(err) => self.err(err.into()),
         };
 
-        match token.as_ref().ok() {
-            Some(Token { kind: TokenKind::Error(_), .. }) => (),
-            Some(tok) => {
-                self.last_token_kind = Some(tok.kind.clone())
-            },
-            _ => (),
-        };
+        if let Some(tok) = token.as_ref().ok() {
+            self.last_token_kind = Some(tok.kind.clone());
+        }
 
         token
     }
@@ -223,7 +219,7 @@ impl<'a> Tokenizer<'a> {
             Some(')') => match self.state.pop() {
                 Ok(_) => self.tok_kind(TokenKind::CloseGroup),
                 Err(StateError::PoppedFinalState) => self.tok_kind(TokenKind::CloseGroup),
-                Err(err @ _) => self.err_tok(err.into()),
+                Err(err @ _) => self.err(err.into()),
             },
 
             // The `[` token pushes the character class state, e.g. `[a-z]`
@@ -328,8 +324,8 @@ impl<'a> Tokenizer<'a> {
 
                 self.tok_kind(TokenKind::Flag(flag))
             },
-            Some(c) if c.is_alphabetic() => self.err_tok(ErrorKind::UnrecognizedFlag(c)),
-            Some(c) => self.err_tok(ErrorKind::UnexpectedChar(c)),
+            Some(c) if c.is_alphabetic() => self.err(ErrorKind::UnrecognizedFlag(c)),
+            Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
             None => self.err(ErrorKind::EndOfFile),
         }
     }
@@ -395,7 +391,7 @@ impl<'a> Tokenizer<'a> {
             Some('\\') => self.parse_escape_sequence_class(),
             // All other characters are just literals
             Some(c) => self.tok_kind(TokenKind::Literal(c)),
-            None => self.err(ErrorKind::EndOfFile)
+            None => self.err(ErrorKind::EndOfFile),
         }
     }
 
@@ -430,7 +426,7 @@ impl<'a> Tokenizer<'a> {
             Some(':') => {
                 self.cursor.bump();
                 self.tok_kind(TokenKind::Colon)
-            }
+            },
             Some('^') => {
                 self.cursor.bump();
                 self.tok_kind(TokenKind::Negated)
@@ -443,13 +439,13 @@ impl<'a> Tokenizer<'a> {
             // valid posix class tokens to find
             Some(c) if unicode_ident::is_xid_continue(c) => {
                 self.cursor.bump();
-                self.err_tok(ErrorKind::UnexpectedChar(c))
+                self.err(ErrorKind::UnexpectedChar(c))
             },
             Some(c) => {
                 self.cursor.bump();
                 self.pop_state()?;
-                self.err_tok(ErrorKind::UnexpectedChar(c))
-            }
+                self.err(ErrorKind::UnexpectedChar(c))
+            },
             None => self.err(ErrorKind::EndOfFile),
         }
     }
@@ -481,7 +477,7 @@ impl<'a> Tokenizer<'a> {
             Some(c) => {
                 self.cursor.bump();
                 self.pop_state()?;
-                self.err_tok(ErrorKind::UnexpectedChar(c))
+                self.err(ErrorKind::UnexpectedChar(c))
             },
             None => self.err(ErrorKind::EndOfFile),
         }
@@ -536,14 +532,14 @@ impl<'a> Tokenizer<'a> {
             // but the state won't be popped because there could be more class tokens to find
             Some(c) if unicode_ident::is_xid_continue(c) => {
                 self.cursor.bump();
-                self.err_tok(ErrorKind::UnexpectedChar(c))
+                self.err(ErrorKind::UnexpectedChar(c))
             },
             // Anything weirder that doesn't belong in a class specifier should create an error
             // _and_ pop the state so that a different mode can look for valid tokens
             Some(c) => {
                 self.cursor.bump();
                 self.pop_state()?;
-                self.err_tok(ErrorKind::UnexpectedChar(c))
+                self.err(ErrorKind::UnexpectedChar(c))
             },
             None => self.err(ErrorKind::EndOfFile),
         }
@@ -687,10 +683,10 @@ impl<'a> Tokenizer<'a> {
                 self.tok_kind(TokenKind::Literal(c))
             },
             // Everything else is an invalid escape sequence
-            Some(c) => self.err_tok(ErrorKind::UnrecognizedEscape(c)),
+            Some(c) => self.err(ErrorKind::UnrecognizedEscape(c)),
             // In lieu of an end of file error, we know that an errant \ exists
             // in the input, so use a more specific error
-            None => self.err_tok(ErrorKind::UnexpectedChar('\\')),
+            None => self.err(ErrorKind::UnexpectedChar('\\')),
         }
     }
 
@@ -726,9 +722,9 @@ impl<'a> Tokenizer<'a> {
             match self.cursor.next() {
                 Some(c) if c.is_ascii_hexdigit() => number.push(c),
                 Some('}') if bounded => break,
-                Some(c) => return self.err_tok(ErrorKind::InvalidHexDigit(c)),
+                Some(c) => return self.err(ErrorKind::InvalidHexDigit(c)),
                 None => {
-                    return self.err_tok(ErrorKind::UnexpectedEOF(String::from(
+                    return self.err(ErrorKind::UnexpectedEOF(String::from(
                         "expected end of hex literal",
                     )))
                 },
@@ -766,8 +762,8 @@ impl<'a> Tokenizer<'a> {
             Some(c) if c.is_ascii_alphabetic() => {
                 self.tok_kind(TokenKind::UnicodeShort(c, negated))
             },
-            Some(c) => self.err_tok(ErrorKind::UnexpectedChar(c)),
-            None => self.err_tok(ErrorKind::UnexpectedEOF(String::from(
+            Some(c) => self.err(ErrorKind::UnexpectedChar(c)),
+            None => self.err(ErrorKind::UnexpectedEOF(String::from(
                 "expected single-character unicode general category",
             ))),
         }
@@ -820,8 +816,8 @@ impl<'a> Tokenizer<'a> {
             Some(c) if Tokenizer::escapes_to_literal_class(&c) => {
                 self.tok_kind(TokenKind::Literal(c))
             },
-            Some(c) => self.err_tok(ErrorKind::UnrecognizedEscape(c)),
-            None => self.err_tok(ErrorKind::UnexpectedChar('\\')),
+            Some(c) => self.err(ErrorKind::UnrecognizedEscape(c)),
+            None => self.err(ErrorKind::UnexpectedChar('\\')),
         }
     }
 
@@ -885,13 +881,6 @@ impl<'a> Tokenizer<'a> {
 
     fn tok_kind(&mut self, kind: TokenKind) -> Result<Token> {
         Ok(self.cursor.map_span(|span| Token { span, kind }))
-    }
-
-    fn err_tok(&mut self, kind: ErrorKind) -> Result<Token> {
-        Ok(self.cursor.map_span(|span| Token {
-            span,
-            kind: TokenKind::Error(Error { span, kind }),
-        }))
     }
 
     #[inline]
