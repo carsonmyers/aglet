@@ -84,13 +84,9 @@ impl<'a> Tokenizer<'a> {
         let res = self.next_token_inner();
 
         if let Err(err) = &res {
-            match &err.cause {
-                ErrorCause::FatalError(_) => self.is_eof = true,
-                ErrorCause::Error(err) => match err {
-                    ErrorKind::EndOfFile | ErrorKind::UnexpectedEOF(_) => self.is_eof = true,
-                    _ => (),
-                },
-            };
+            if err.is_fatal() || err.is_any_eof() {
+                self.is_eof = true;
+            }
         }
 
         res
@@ -875,13 +871,15 @@ impl<'a> Iterator for Tokenizer<'a> {
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.next_token() {
-            Err(Error {
-                cause: ErrorCause::Error(ErrorKind::EndOfFile),
-                ..
-            }) => None,
-            result => Some(result),
+        let res = self.next_token();
+
+        if let Err(err) = &res {
+            if err.is_eof() {
+                return None;
+            }
         }
+
+        Some(res)
     }
 }
 
@@ -893,13 +891,15 @@ impl<'a> Iterator for TokenStackIterator<'a> {
     type Item = StackResult<TokenStack>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.tokenizer.next_token_stack() {
-            Err(StackError {
-                cause: ErrorCause::Error(ErrorKind::EndOfFile),
-                ..
-            }) => None,
-            result => Some(result),
+        let res = self.tokenizer.next_token_stack();
+
+        if let Err(err) = &res {
+            if err.is_eof() {
+                return None;
+            }
         }
+
+        Some(res)
     }
 }
 

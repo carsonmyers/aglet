@@ -101,12 +101,12 @@ impl<'a> Parser<'a> {
     /// Parse the regular expression into a [syntax tree](Ast)
     pub fn parse(mut self) -> ParseResult {
         let res = self.parse_expr();
-        let expr = self.ok_or_default(res);
+        let ast = self.ok_or_default(res);
 
-        ParseResult {
-            ast:    expr,
-            errors: self.errors,
-        }
+        let mut errors = self.errors;
+        errors.extend_from_slice(self.input.errors());
+
+        ParseResult { ast, errors }
     }
 
     /// Parse an expression, starting with alternations as the weakest binding operation
@@ -2226,7 +2226,7 @@ mod tests {
         assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
 
         let class = get_class(p.parse_specified_class());
-        assert_eq!(class.negated, true);
+        assert!(class.negated);
         assert_eq!(class.span.start, 5);
         assert_eq!(class.span.end, 11);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
@@ -2256,15 +2256,15 @@ mod tests {
             panic!("symmetrical");
         };
 
-        assert!(matches!((*spec.left).kind, ClassSpecKind::Intersection(_)));
-        assert!(matches!((*spec.right).kind, ClassSpecKind::Literal('Q')));
+        assert!(matches!(spec.left.kind, ClassSpecKind::Intersection(_)));
+        assert!(matches!(spec.right.kind, ClassSpecKind::Literal('Q')));
 
-        let ClassSpecKind::Intersection(spec) = (*spec.left).kind else {
+        let ClassSpecKind::Intersection(spec) = spec.left.kind else {
             panic!("intersection");
         };
 
-        assert!(matches!((*spec.left).kind, ClassSpecKind::Range('a', 'z')));
-        assert!(matches!((*spec.right).kind, ClassSpecKind::Literal('\x63')));
+        assert!(matches!(spec.left.kind, ClassSpecKind::Range('a', 'z')));
+        assert!(matches!(spec.right.kind, ClassSpecKind::Literal('\x63')));
     }
 
     #[test]
@@ -2409,13 +2409,13 @@ mod tests {
         let ClassSpecKind::Difference(set) = spec.kind else {
             panic!("difference set");
         };
-        assert!(matches!((*set.left).kind, ClassSpecKind::Symmetrical(_)));
-        assert!(matches!((*set.right).kind, ClassSpecKind::Literal('z')));
+        assert!(matches!(set.left.kind, ClassSpecKind::Symmetrical(_)));
+        assert!(matches!(set.right.kind, ClassSpecKind::Literal('z')));
 
-        let ClassSpecKind::Symmetrical(set) = (*set.left).kind else {
+        let ClassSpecKind::Symmetrical(set) = set.left.kind else {
             panic!("symmetrical set");
         };
-        assert!(matches!((*set.left).kind, ClassSpecKind::Literal('c')));
-        assert!(matches!((*set.right).kind, ClassSpecKind::Range('a', 'z')));
+        assert!(matches!(set.left.kind, ClassSpecKind::Literal('c')));
+        assert!(matches!(set.right.kind, ClassSpecKind::Range('a', 'z')));
     }
 }

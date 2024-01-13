@@ -1,4 +1,4 @@
-use std::{fmt, result};
+use std::{fmt, ops, result};
 
 use aglet_text::Span;
 
@@ -17,6 +17,21 @@ impl Error {
     pub fn new(span: Span, cause: ErrorCause) -> Self {
         Error { span, cause }
     }
+
+    pub fn is_fatal(&self) -> bool {
+        matches!(self.cause, ErrorCause::FatalError(_))
+    }
+
+    pub fn is_eof(&self) -> bool {
+        matches!(self.cause, ErrorCause::Error(ErrorKind::EndOfFile))
+    }
+
+    pub fn is_any_eof(&self) -> bool {
+        matches!(
+            self.cause,
+            ErrorCause::Error(ErrorKind::EndOfFile | ErrorKind::UnexpectedEOF(_))
+        )
+    }
 }
 
 impl fmt::Display for Error {
@@ -27,24 +42,27 @@ impl fmt::Display for Error {
 
 #[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub struct StackError {
-    pub span:  Span,
+    pub error: Error,
     pub stack: StateStack,
-    pub cause: ErrorCause,
 }
 
 impl StackError {
-    pub fn from_error(err: Error, stack: StateStack) -> Self {
-        StackError {
-            span: err.span,
-            stack,
-            cause: err.cause,
-        }
+    pub fn from_error(error: Error, stack: StateStack) -> Self {
+        StackError { error, stack }
     }
 }
 
 impl fmt::Display for StackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}) {}", self.span, self.cause)
+    }
+}
+
+impl ops::Deref for StackError {
+    type Target = Error;
+
+    fn deref(&self) -> &Self::Target {
+        &self.error
     }
 }
 
