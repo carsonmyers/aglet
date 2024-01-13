@@ -81,22 +81,19 @@ impl<'a> Tokenizer<'a> {
             return self.err(ErrorKind::EndOfFile);
         }
 
-        match self.next_token_inner() {
-            // non-recoverable errors should mark the tokenizer as EOF
-            e @ Err(Error {
-                kind:
-                    ErrorKind::EndOfFile
-                    | ErrorKind::UnexpectedEOF(_)
-                    | ErrorKind::InternalStateError(_)
-                    | ErrorKind::EmptyStateStack
-                    | ErrorKind::NotImplemented,
-                ..
-            }) => {
-                self.is_eof = true;
-                e
-            },
-            res => res,
+        let res = self.next_token_inner();
+
+        if let Err(err) = &res {
+            match &err.cause {
+                ErrorCause::FatalError(_) => self.is_eof = true,
+                ErrorCause::Error(err) => match err {
+                    ErrorKind::EndOfFile | ErrorKind::UnexpectedEOF(_) => self.is_eof = true,
+                    _ => (),
+                },
+            };
         }
+
+        res
     }
 
     /// Get the next token from the input, along with the current state stack.
@@ -135,10 +132,12 @@ impl<'a> Tokenizer<'a> {
     /// colorization of pretty-printed token lists when, for example, a brace can be colorized as
     /// part of a repetition or a unicode class. The open brace is always part of one state or the
     /// other, but the close brace would never have that associated information.
-    pub fn next_token_stack(&mut self) -> Result<TokenStack> {
+    pub fn next_token_stack(&mut self) -> StackResult<TokenStack> {
         let (token, stack) = {
             let stack_before = self.state.clone();
-            let token = self.next_token()?;
+            let token = self
+                .next_token()
+                .map_err(|e| StackError::from_error(e, stack_before.clone()))?;
 
             if stack_before.stack.len() > self.state.stack.len() {
                 (token, stack_before)
@@ -164,10 +163,10 @@ impl<'a> Tokenizer<'a> {
             Ok(State::ClassName) => self.next_token_class_name(),
             Ok(State::Range) => self.next_token_range(),
             Ok(State::UnicodeProperties) => self.next_token_unicode_properties(),
-            Err(err) => self.err(err.into()),
+            Err(err) => self.fatal_err(err.into()),
         };
 
-        if let Some(tok) = token.as_ref().ok() {
+        if let Ok(tok) = token.as_ref() {
             self.last_token_kind = Some(tok.kind.clone());
         }
 
@@ -219,7 +218,7 @@ impl<'a> Tokenizer<'a> {
             Some(')') => match self.state.pop() {
                 Ok(_) => self.tok_kind(TokenKind::CloseGroup),
                 Err(StateError::PoppedFinalState) => self.tok_kind(TokenKind::CloseGroup),
-                Err(err @ _) => self.err(err.into()),
+                Err(err) => self.fatal_err(err.into()),
             },
 
             // The `[` token pushes the character class state, e.g. `[a-z]`
@@ -264,7 +263,7 @@ impl<'a> Tokenizer<'a> {
     fn next_token_group_options(&mut self) -> Result<Token> {
         if matches!(self.last_token_kind, Some(TokenKind::OpenGroupName)) {
             let name = self.parse_id();
-            if name.len() > 0 {
+            if !name.is_empty() {
                 return self.tok_kind(TokenKind::Name(name));
             }
         }
@@ -293,17 +292,17 @@ impl<'a> Tokenizer<'a> {
                 self.tok_kind(TokenKind::FlagDelimiter)
             },
             Some(')') => {
-                let is_flag_group = match self.last_token_kind {
-                    Some(TokenKind::Flag(_) | TokenKind::FlagDelimiter) => true,
-                    _ => false,
-                };
+                let is_flag_group = matches!(
+                    self.last_token_kind,
+                    Some(TokenKind::Flag(_) | TokenKind::FlagDelimiter)
+                );
 
                 if is_flag_group {
                     let ignore_space = self.flags()?.ignore_space;
                     self.pop_state()?;
 
                     {
-                        let mut flags = self.flags_mut()?;
+                        let flags = self.flags_mut()?;
                         flags.ignore_space = ignore_space;
                     }
                 } else {
@@ -552,60 +551,42 @@ impl<'a> Tokenizer<'a> {
 
     #[inline]
     fn swap_state(&mut self, state: State) -> Result<State> {
-        self.state.swap(state).map_err(|err| {
-            let span = self.cursor.span();
-            Error {
-                span,
-                kind: ErrorKind::InternalStateError(err),
-            }
-        })
+        self.state
+            .swap(state)
+            .map_err(|err| self.raw_err(err.into()))
     }
 
     #[inline]
     fn pop_state(&mut self) -> Result<State> {
-        self.state.pop().map_err(|err| {
-            let span = self.cursor.span();
-            Error {
-                span,
-                kind: ErrorKind::InternalStateError(err),
-            }
-        })
+        self.state.pop().map_err(|err| self.raw_err(err.into()))
     }
 
     #[inline]
     fn pop_all_states(&mut self) -> Result<()> {
-        self.state.pop_all().map_err(|err| {
-            let span = self.cursor.span();
-            Error {
-                span,
-                kind: ErrorKind::InternalStateError(err),
-            }
-        })
+        self.state.pop_all().map_err(|err| self.raw_err(err.into()))
     }
 
     /// Get an immutable copy of the state flags
+    #[inline]
     fn flags(&mut self) -> Result<&Flags> {
         let span = self.cursor.span();
+        let res = self.state.flags();
 
-        match self.state.flags() {
+        match res {
             Ok(flags) => Ok(flags),
-            Err(err) => Err(Error {
-                span,
-                kind: ErrorKind::InternalStateError(err),
-            }),
+            Err(err) => Err(Error::new(span, err.into())),
         }
     }
 
     /// Get a mutable copy of the state flags
+    #[inline]
     fn flags_mut(&mut self) -> Result<&mut Flags> {
         let span = self.cursor.span();
+        let res = self.state.flags_mut();
 
-        match self.state.flags_mut() {
+        match res {
             Ok(flags) => Ok(flags),
-            Err(err) => Err(Error {
-                span,
-                kind: ErrorKind::InternalStateError(err),
-            }),
+            Err(err) => Err(Error::new(span, err.into())),
         }
     }
 
@@ -627,7 +608,7 @@ impl<'a> Tokenizer<'a> {
     /// `abcdefghi`
     fn skip_whitespace(&mut self) {
         // Keep track of whether a comment is being skipped; this will cause
-        // every character except a newling to be skipped, instead of only
+        // every character except a newline to be skipped, instead of only
         // whitespace and `#` characters.
         let mut skipping_comment = false;
         loop {
@@ -732,9 +713,9 @@ impl<'a> Tokenizer<'a> {
         }
 
         let value = u32::from_str_radix(&number, 16)
-            .expect(&format!("accepted invalid hex string: {}", number));
+            .unwrap_or_else(|_| panic!("accepted invalid hex string: {}", number));
         let c = char::from_u32(value)
-            .ok_or_else(|| self.raw_err(ErrorKind::InvalidCharCode(number)))?;
+            .ok_or_else(|| self.raw_err(ErrorKind::InvalidCharCode(number).into()))?;
 
         self.tok_kind(TokenKind::Literal(c))
     }
@@ -847,36 +828,28 @@ impl<'a> Tokenizer<'a> {
         // always be the output. Parse the input as an unsigned integer
         let value = number
             .parse::<usize>()
-            .expect(&format!("accepted invalid number: {}", number));
+            .unwrap_or_else(|_| panic!("accepted invalid number: {}", number));
 
         self.tok_kind(TokenKind::Number(value))
     }
 
     /// Check whether a character can be escaped in the `Main` state
     fn escapes_to_literal_main(c: &char) -> bool {
-        match c {
-            '^' | '$' | '.' | '?' | '*' | '+' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' => {
-                true
-            },
-            _ => false,
-        }
+        matches!(
+            c,
+            '^' | '$' | '.' | '?' | '*' | '+' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | '\\'
+        )
     }
 
     /// Check whether a character can be escaped in the `Class` state
     fn escapes_to_literal_class(c: &char) -> bool {
-        match c {
-            '^' | '&' | '~' | '-' | '[' | ']' | ':' | '\\' => true,
-            _ => false,
-        }
+        matches!(c, '^' | '&' | '~' | '-' | '[' | ']' | ':' | '\\')
     }
 
     /// Check whether a character is the beginning of a hex escape sequence
     /// (e.g. in `\x7F`, `\u007F`, `\x{12AB}`, etc.)
     fn is_hex_escape(c: &char) -> bool {
-        match c {
-            'x' | 'u' | 'U' => true,
-            _ => false,
-        }
+        matches!(c, 'x' | 'u' | 'U')
     }
 
     fn tok_kind(&mut self, kind: TokenKind) -> Result<Token> {
@@ -885,12 +858,16 @@ impl<'a> Tokenizer<'a> {
 
     #[inline]
     fn err<T>(&mut self, kind: ErrorKind) -> Result<T> {
-        Err(self.raw_err(kind))
+        Err(self.raw_err(kind.into()))
+    }
+
+    fn fatal_err<T>(&mut self, kind: FatalErrorKind) -> Result<T> {
+        Err(self.raw_err(kind.into()))
     }
 
     #[inline]
-    fn raw_err(&mut self, kind: ErrorKind) -> Error {
-        self.cursor.map_span(|span| Error { span, kind })
+    fn raw_err(&mut self, cause: ErrorCause) -> Error {
+        self.cursor.map_span(|span| Error { span, cause })
     }
 }
 
@@ -900,10 +877,10 @@ impl<'a> Iterator for Tokenizer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
             Err(Error {
-                kind: ErrorKind::EndOfFile,
+                cause: ErrorCause::Error(ErrorKind::EndOfFile),
                 ..
             }) => None,
-            result @ _ => Some(result),
+            result => Some(result),
         }
     }
 }
@@ -913,15 +890,15 @@ pub struct TokenStackIterator<'a> {
 }
 
 impl<'a> Iterator for TokenStackIterator<'a> {
-    type Item = Result<TokenStack>;
+    type Item = StackResult<TokenStack>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.tokenizer.next_token_stack() {
-            Err(Error {
-                kind: ErrorKind::EndOfFile,
+            Err(StackError {
+                cause: ErrorCause::Error(ErrorKind::EndOfFile),
                 ..
             }) => None,
-            result @ _ => Some(result),
+            result => Some(result),
         }
     }
 }

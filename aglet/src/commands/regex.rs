@@ -116,7 +116,9 @@ fn print_tokens(
                 Ok(stack) => {
                     printer.print(&stack)?;
                 },
-                Err(e) => println!("{:?}", e),
+                Err(stack_error) => {
+                    printer.print(&stack_error)?;
+                },
             }
         }
     } else {
@@ -125,7 +127,9 @@ fn print_tokens(
                 Ok(tok) => {
                     printer.print(&tok)?;
                 },
-                Err(e) => println!("{:?}", e),
+                Err(e) => {
+                    printer.print(&e)?;
+                },
             }
         }
     }

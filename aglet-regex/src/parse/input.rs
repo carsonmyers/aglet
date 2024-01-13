@@ -65,10 +65,11 @@ impl<'a> Input<'a> {
         F: Fn(&TokenKind) -> bool,
     {
         if self.has_where(f)? {
-            Ok(Some(self
-                .next()
-                .expect("next token matches previous peek")
-                .expect("next token matches previous peek")))
+            Ok(Some(
+                self.next()
+                    .expect("next token matches previous peek")
+                    .expect("next token matches previous peek"),
+            ))
         } else {
             Ok(None)
         }

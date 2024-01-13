@@ -1,6 +1,4 @@
-use color_eyre::{
-    eyre::{Report, WrapErr},
-};
+use color_eyre::eyre::{Report, WrapErr};
 use thiserror::Error;
 
 fn main() -> Result<(), Report> {
@@ -13,8 +11,7 @@ fn main() -> Result<(), Report> {
 
 fn do_thing() -> Result<String, Report> {
     other_thing()?;
-    let stuff = std::fs::read_to_string("fake_file")
-        .wrap_err("Failed to open file")?;
+    let stuff = std::fs::read_to_string("fake_file").wrap_err("Failed to open file")?;
 
     Ok(stuff.to_uppercase())
 }

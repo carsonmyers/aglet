@@ -77,9 +77,9 @@ use crate::tokenize::{self, Token, TokenKind};
 ///     | '&&' spec_item spec_set?
 /// ```
 pub struct Parser<'a> {
-    input: Input<'a>,
+    input:       Input<'a>,
     group_index: usize,
-    errors: Vec<Error>,
+    errors:      Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
@@ -92,9 +92,9 @@ impl<'a> Parser<'a> {
         T: Iterator<Item = tokenize::Result<Token>> + 'a,
     {
         Parser {
-            input: Input::new(input),
+            input:       Input::new(input),
             group_index: 1,
-            errors: Vec::new(),
+            errors:      Vec::new(),
         }
     }
 
@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
         let expr = self.ok_or_default(res);
 
         ParseResult {
-            ast: expr,
+            ast:    expr,
             errors: self.errors,
         }
     }
@@ -343,7 +343,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn parse_repetition_range(&mut self) -> Result<Option<RepetitionKind>> {
         let Some(open_tok) = self.input.match_where(TokenKind::is_open_brace)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         // both numbers are optional, `{,}` is equivalent to `{0,}` and `*`
@@ -422,7 +422,7 @@ impl<'a> Parser<'a> {
     /// Parse the "any" item (`.`)
     pub fn parse_dot(&mut self) -> Result<Option<Expr>> {
         let Some(tok) = self.input.match_where(TokenKind::is_dot)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         Ok(Some(Expr {
@@ -434,7 +434,7 @@ impl<'a> Parser<'a> {
     /// Parse a literal item (a single character)
     pub fn parse_literal(&mut self) -> Result<Option<Expr>> {
         let Some(tok) = self.input.match_where(TokenKind::is_literal)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         tok!(TokenKind::Literal(c) = tok);
@@ -447,7 +447,7 @@ impl<'a> Parser<'a> {
     /// Parse a digit short class, `\d` or `\D`
     pub fn parse_digit_class(&mut self) -> Result<Option<Expr>> {
         let Some(tok) = self.input.match_where(TokenKind::is_digit)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         tok!(TokenKind::Digit(negated) = tok);
@@ -460,7 +460,7 @@ impl<'a> Parser<'a> {
     /// Parse a whitespace short class, `\s` or `\S`
     pub fn parse_whitespace_class(&mut self) -> Result<Option<Expr>> {
         let Some(tok) = self.input.match_where(TokenKind::is_whitespace)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         tok!(TokenKind::Whitespace(negated) = tok);
@@ -473,7 +473,7 @@ impl<'a> Parser<'a> {
     /// Parse a word character short class, `\w` or `\W`
     pub fn parse_word_class(&mut self) -> Result<Option<Expr>> {
         let Some(tok) = self.input.match_where(TokenKind::is_word_char)? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         tok!(TokenKind::WordChar(negated) = tok);
@@ -641,7 +641,7 @@ impl<'a> Parser<'a> {
 
             let expr = self.parse_expr()?;
             let name = StringSpan {
-                span: name_tok.span,
+                span:  name_tok.span,
                 value: name,
             };
 
@@ -666,8 +666,8 @@ impl<'a> Parser<'a> {
                 })
             } else {
                 let flags = flags.unwrap_or_else(|| Flags {
-                    span: Span::new(open_tok.span.end, open_tok.span.end),
-                    set_flags: Vec::new(),
+                    span:        Span::new(open_tok.span.end, open_tok.span.end),
+                    set_flags:   Vec::new(),
                     clear_flags: Vec::new(),
                 });
 
@@ -711,9 +711,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if span.is_some() {
+        if let Some(span) = span {
             Ok(Some(Flags {
-                span: span.unwrap(),
+                span,
                 set_flags,
                 clear_flags,
             }))
@@ -837,10 +837,10 @@ impl<'a> Parser<'a> {
         // create a unicode class for the general category specified by the token
         tok!(TokenKind::UnicodeShort(category, negated) = tok);
         let unicode_class = UnicodeClass {
-            span: tok.span,
-            name: None,
+            span:  tok.span,
+            name:  None,
             value: StringSpan {
-                span: tok.span,
+                span:  tok.span,
                 value: format!("{}", category),
             },
         };
@@ -882,7 +882,7 @@ impl<'a> Parser<'a> {
         let first_name_tok = self.expect_match("name", TokenKind::is_name)?;
         tok!(TokenKind::Name(n) = first_name_tok);
         let first_name = StringSpan {
-            span: first_name_tok.span,
+            span:  first_name_tok.span,
             value: n,
         };
 
@@ -899,7 +899,7 @@ impl<'a> Parser<'a> {
 
             tok!(TokenKind::Name(v) = second_name_tok);
             second_name = Some(StringSpan {
-                span: second_name_tok.span,
+                span:  second_name_tok.span,
                 value: v,
             });
         }
@@ -1044,7 +1044,7 @@ impl<'a> Parser<'a> {
     /// [1]: Parser::parse_specified_class
     pub fn parse_specified_class_item(&mut self) -> Result<Option<ClassSpec>> {
         let Some(term) = self.parse_specified_class_term()? else {
-            return Ok(None)
+            return Ok(None);
         };
 
         let with_set = self.parse_class_item_set(term)?;
@@ -1293,7 +1293,10 @@ impl<'a> Parser<'a> {
 
         // parse the right-hand side of the operation
         let Some(end) = self.parse_specified_class_term()? else {
-            return Err(self.input.error(ErrorKind::UnexpectedToken(set_kind, "end of set".to_string())));
+            return Err(self.input.error(ErrorKind::UnexpectedToken(
+                set_kind,
+                "end of set".to_string(),
+            )));
         };
 
         // construct a `ClassSpecKind` depending on which operator was found
@@ -1369,17 +1372,18 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 self.errors.push(e);
                 Default::default()
-            }
+            },
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Debug;
+
     use super::*;
     use crate::parse::{assert_err, assert_kind, span_token_iter, token_iter};
     use crate::tokenize::Flag;
-    use std::fmt::Debug;
 
     fn unwrap_parse<T>(r: Result<Option<T>>) -> T
     where
@@ -1469,6 +1473,14 @@ mod tests {
         spec
     }
 
+    fn get_class_items(class: Class) -> Vec<ClassSpec> {
+        if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
+            items
+        } else {
+            panic!("not a specified class");
+        }
+    }
+
     fn get_unicode_class(class: Class) -> UnicodeClass {
         let ClassKind::Unicode(class) = class.kind else {
             panic!("class is not unicode class");
@@ -1504,7 +1516,11 @@ mod tests {
         assert_kind!(items[0], ExprKind::Literal('b'));
         assert_kind!(items[1], ExprKind::Literal('c'));
 
-        let ExprKind::Group(Group { kind: GroupKind::Capturing(group), .. }) = &alt.items[2].kind else {
+        let ExprKind::Group(Group {
+            kind: GroupKind::Capturing(group),
+            ..
+        }) = &alt.items[2].kind
+        else {
             panic!("not a group");
         };
         assert_kind!(group.expr, ExprKind::Empty);
@@ -1525,7 +1541,11 @@ mod tests {
         assert_kind!(concat.items[0], ExprKind::Literal('a'));
         assert_kind!(concat.items[1], ExprKind::Literal('b'));
         assert_kind!(concat.items[2], ExprKind::Group(_));
-        let ExprKind::Group(Group { kind: GroupKind::Capturing(group), .. }) = &concat.items[2].kind else {
+        let ExprKind::Group(Group {
+            kind: GroupKind::Capturing(group),
+            ..
+        }) = &concat.items[2].kind
+        else {
             panic!("not a group");
         };
 
@@ -2091,12 +2111,12 @@ mod tests {
         ]));
 
         let class = get_class(p.parse_unicode_short_class());
-        assert_eq!(class.negated, false);
+        assert!(!class.negated);
         let u_class = get_unicode_class(class);
         assert_eq!(u_class.value.value, "L".to_string());
 
         let class = get_class(p.parse_unicode_short_class());
-        assert_eq!(class.negated, true);
+        assert!(class.negated);
         let u_class = get_unicode_class(class);
         assert_eq!(u_class.value.value, "L".to_string());
 
@@ -2139,33 +2159,33 @@ mod tests {
         ]));
 
         let class = get_class(p.parse_unicode_long_class());
-        assert_eq!(class.negated, false);
+        assert!(!class.negated);
         let u_class = get_unicode_class(class);
         assert!(u_class.name.is_none());
         assert_eq!(u_class.value.value, "Letter".to_string());
 
         let class = get_class(p.parse_unicode_long_class());
-        assert_eq!(class.negated, true);
+        assert!(class.negated);
         let u_class = get_unicode_class(class);
         assert!(u_class.name.is_none());
         assert_eq!(u_class.value.value, "Digit".to_string());
 
         let class = get_class(p.parse_unicode_long_class());
-        assert_eq!(class.negated, true);
+        assert!(class.negated);
         let u_class = get_unicode_class(class);
         assert!(u_class.name.is_some());
         assert_eq!(u_class.name.unwrap().value, "sc".to_string());
         assert_eq!(u_class.value.value, "Greek".to_string());
 
         let class = get_class(p.parse_unicode_long_class());
-        assert_eq!(class.negated, true);
+        assert!(class.negated);
         let u_class = get_unicode_class(class);
         assert!(u_class.name.is_some());
         assert_eq!(u_class.name.unwrap().value, "sc".to_string());
         assert_eq!(u_class.value.value, "Greek".to_string());
 
         let class = get_class(p.parse_unicode_long_class());
-        assert_eq!(class.negated, false);
+        assert!(!class.negated);
         let u_class = get_unicode_class(class);
         assert!(u_class.name.is_some());
         assert_eq!(u_class.name.unwrap().value, "sc".to_string());
@@ -2195,28 +2215,26 @@ mod tests {
         ));
 
         let class = get_class(p.parse_specified_class());
-        assert_eq!(class.negated, false);
+        assert!(!class.negated);
         assert_eq!(class.span.start, 0);
         assert_eq!(class.span.end, 5);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
-        if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
-            assert_eq!(items.len(), 3);
-            assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
-            assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
-            assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
-        }
+        let items = get_class_items(class);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
+        assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
+        assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
 
         let class = get_class(p.parse_specified_class());
         assert_eq!(class.negated, true);
         assert_eq!(class.span.start, 5);
         assert_eq!(class.span.end, 11);
         assert!(matches!(class.kind, ClassKind::Specified(_)));
-        if let ClassKind::Specified(SpecifiedClass { items, .. }) = class.kind {
-            assert_eq!(items.len(), 3);
-            assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
-            assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
-            assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
-        }
+        let items = get_class_items(class);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0].kind, ClassSpecKind::Literal('a')));
+        assert!(matches!(items[1].kind, ClassSpecKind::Literal('b')));
+        assert!(matches!(items[2].kind, ClassSpecKind::Literal('c')));
     }
 
     #[test]

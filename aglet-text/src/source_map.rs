@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Component::Normal, Path};
+use std::path::Component::Normal;
+use std::path::Path;
 
 use crate::span::{FilePosition, FileSpan, Span};
 use crate::Error;
@@ -9,10 +10,10 @@ pub type FileId = u32;
 
 #[derive(Debug, Clone)]
 pub struct SourceFile {
-    pub prefix: String,
+    pub prefix:   String,
     pub filename: String,
-    pub src: String,
-    pub lines: Vec<usize>,
+    pub src:      String,
+    pub lines:    Vec<usize>,
 }
 
 impl SourceFile {
@@ -57,7 +58,7 @@ impl SourceFile {
             .find(|(_, start_offset)| start_offset <= &offset)
             .map(|(line, start_offset)| FilePosition {
                 offset: *offset,
-                line: line + 1,
+                line:   line + 1,
                 column: offset - start_offset + 1,
             })
     }
@@ -76,14 +77,14 @@ impl SourceFile {
 #[derive(Debug, Clone)]
 pub struct SourceMap {
     next_id: FileId,
-    files: HashMap<FileId, SourceFile>,
+    files:   HashMap<FileId, SourceFile>,
 }
 
 impl SourceMap {
     pub fn new() -> Self {
         Self {
             next_id: 0,
-            files: HashMap::new(),
+            files:   HashMap::new(),
         }
     }
 
@@ -119,8 +120,11 @@ mod tests {
     #[test]
     fn test_file_init() {
         let input = vec!["abcd", "", "efgh"].join("\n");
-        let file =
-            SourceFile::new_from_source("<test>".to_string(), "test_file".to_string(), input.clone());
+        let file = SourceFile::new_from_source(
+            "<test>".to_string(),
+            "test_file".to_string(),
+            input.clone(),
+        );
 
         assert_eq!(file.prefix, "<test>".to_string());
         assert_eq!(file.filename, "test_file".to_string());
@@ -132,10 +136,11 @@ mod tests {
     fn test_file_positions() {
         let input = vec![
             "01234", // 0-5
-            "67", // 6-8
-            "", // 9
-            "012", // 10-12
-        ].join("\n");
+            "67",    // 6-8
+            "",      // 9
+            "012",   // 10-12
+        ]
+        .join("\n");
         let file = SourceFile::new_from_source("".to_string(), "<test>".to_string(), input);
 
         let pos = file.file_position_from_offset(&3).expect("pos in bounds");

@@ -4,10 +4,7 @@ use aglet_text::Span;
 use colored::control::ShouldColorize;
 use colored::Color;
 
-use crate::AstPrinter;
-use crate::Pretty;
-use crate::Result;
-use crate::TokenPrinter;
+use crate::{AstPrinter, Pretty, Result, TokenPrinter};
 
 /// Writer for pretty-printing parser structures
 ///

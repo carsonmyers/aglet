@@ -3,7 +3,8 @@ pub mod parse;
 pub mod tokenize;
 
 pub use error::Error;
-pub use parse::{Parser, ast::ParseResult};
+pub use parse::ast::ParseResult;
+pub use parse::Parser;
 pub use tokenize::{Token, Tokenizer};
 
 pub fn tokenize<S: AsRef<str>>(input: &str) -> Result<Vec<Token>, tokenize::Error> {

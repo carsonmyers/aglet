@@ -3,9 +3,7 @@ use std::fmt::{self, Write};
 use aglet_text::Span;
 use colored::{Color, Colorize};
 
-use crate::Pretty;
-use crate::Result;
-use crate::Writer;
+use crate::{Pretty, Result, Writer};
 
 const DEFAULT_COLOR: Color = Color::White;
 const PARAMETER_COLOR: Color = Color::TrueColor {
@@ -171,9 +169,7 @@ mod tests {
     use aglet_text::Span;
 
     use super::*;
-    use crate::ColorWhen;
-    use crate::PrettyPrintSettings;
-    use crate::PrettyPrinter;
+    use crate::{ColorWhen, PrettyPrintSettings, PrettyPrinter};
 
     struct Expr {
         kind: ExprKind,

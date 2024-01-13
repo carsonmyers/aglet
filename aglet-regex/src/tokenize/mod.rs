@@ -4,7 +4,7 @@ mod state;
 pub mod token;
 pub mod tokenizer;
 
-pub use error::{Error, ErrorKind, Result};
+pub use error::{Error, ErrorCause, ErrorKind, FatalErrorKind, Result};
 pub use token::{Flag, Token, TokenKind};
 pub use tokenizer::Tokenizer;
 
@@ -22,7 +22,13 @@ macro_rules! assert_next_tok {
 macro_rules! assert_next_err {
     ( $tokenizer:expr , $kind:pat ) => {
         let next = $tokenizer.next();
-        if !matches!(next, Some(Err(Error { kind: $kind, .. }))) {
+        if !matches!(
+            next,
+            Some(Err(Error {
+                cause: ErrorCause::Error($kind),
+                ..
+            }))
+        ) {
             panic!("{:?} does not match error {}", next, stringify!($kind));
         }
     };

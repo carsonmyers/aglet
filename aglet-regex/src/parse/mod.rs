@@ -50,7 +50,7 @@ macro_rules! assert_kind {
         if !matches!($expr.kind, $kind) {
             panic!("{:?} does not match {}", $expr.kind, stringify!($kind));
         }
-    }
+    };
 }
 
 #[cfg(test)]
@@ -59,10 +59,10 @@ macro_rules! assert_err {
         if !matches!($res, Err(Error { kind: $kind, .. })) {
             panic!("{:?} does not match error {}", $res, stringify!($kind));
         }
-    }
+    };
 }
 
 #[cfg(test)]
-pub(crate) use assert_kind;
-#[cfg(test)]
 pub(crate) use assert_err;
+#[cfg(test)]
+pub(crate) use assert_kind;

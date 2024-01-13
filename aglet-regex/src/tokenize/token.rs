@@ -3,7 +3,7 @@ use std::fmt;
 
 use aglet_text::Span;
 
-use crate::tokenize::error::{Error, ErrorKind};
+use crate::tokenize::error::ErrorKind;
 use crate::tokenize::state::StateStack;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl Token {
     pub fn new_with_offsets(kind: TokenKind, start: usize, end: usize) -> Self {
         Self {
             span: Span::new(start, end),
-            kind
+            kind,
         }
     }
 }
@@ -173,7 +173,7 @@ pub enum TokenKind {
 
     /// Start of group options `?` in e.g. `(?<name>...)`
     OpenGroupOptions,
-    
+
     /// End of group options `:` in e.g. `(?isx:...)`
     CloseGroupOptions,
 
@@ -182,7 +182,6 @@ pub enum TokenKind {
 
     /// End of group name `>` in e.g. `(?<name>...)`
     CloseGroupName,
-
 
     /// Flags in group options or a non-capturing flags group (e.g. `(?i-x)`)
     Flag(Flag),
@@ -447,9 +446,7 @@ impl TokenKind {
     #[inline]
     pub fn is_set_operator(&self) -> bool {
         match self {
-            TokenKind::Symmetrical
-            | TokenKind::Difference
-            | TokenKind::Intersection => true,
+            TokenKind::Symmetrical | TokenKind::Difference | TokenKind::Intersection => true,
             _ => false,
         }
     }
@@ -489,9 +486,13 @@ pub struct TokenStack {
 macro_rules! tok {
     ( $kind:pat = $tok:ident) => {
         let $kind = $tok.kind else {
-            panic!("token `{}` does not match pattern `{}`", stringify!($tok.kind), stringify!($kind));
+            panic!(
+                "token `{}` does not match pattern `{}`",
+                stringify!($tok.kind),
+                stringify!($kind)
+            );
         };
-    }
+    };
 }
 
 pub(crate) use tok;

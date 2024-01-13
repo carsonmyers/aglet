@@ -4,8 +4,7 @@ mod span_printer;
 mod token_printer;
 mod writer;
 
-use std::iter;
-use std::result;
+use std::{iter, result};
 
 use aglet_text::{SourceFile, Span};
 use ast_printer::AstPrinter;
@@ -34,9 +33,9 @@ const EXTRA_COLOR: Color = Color::TrueColor {
 /// be displayed to the right.
 pub struct PrettyPrinter {
     settings: PrettyPrintSettings,
-    main: String,
-    spans: Vec<Option<Span>>,
-    meta: Vec<Option<String>>,
+    main:     String,
+    spans:    Vec<Option<Span>>,
+    meta:     Vec<Option<String>>,
 }
 
 impl PrettyPrinter {
@@ -103,10 +102,7 @@ impl PrettyPrinter {
                             start.and_then(|start| end.map(|end| (filename, start, end)))
                         })
                         .map(|(filename, start, end)| {
-                            (
-                                format!("{} {:?}", filename, start),
-                                format!("{:?}", end),
-                            )
+                            (format!("{} {:?}", filename, start), format!("{:?}", end))
                         })
                         .unwrap_or_else(|| (format!("{:?}", span.start), format!("{:?}", span.end)))
                 })
@@ -267,12 +263,12 @@ fn len_clean(string: &str) -> usize {
 
 #[derive(Debug, Clone)]
 pub struct PrettyPrintSettings {
-    source: Option<SourceFile>,
-    align: bool,
+    source:        Option<SourceFile>,
+    align:         bool,
     include_spans: bool,
-    include_meta: bool,
-    color_when: ColorWhen,
-    indent: String,
+    include_meta:  bool,
+    color_when:    ColorWhen,
+    indent:        String,
 }
 
 impl PrettyPrintSettings {
@@ -317,12 +313,12 @@ impl PrettyPrintSettings {
 impl Default for PrettyPrintSettings {
     fn default() -> Self {
         Self {
-            source: None,
-            align: true,
+            source:        None,
+            align:         true,
             include_spans: true,
-            include_meta: true,
-            color_when: ColorWhen::Auto,
-            indent: "  ".to_string(),
+            include_meta:  true,
+            color_when:    ColorWhen::Auto,
+            indent:        "  ".to_string(),
         }
     }
 }

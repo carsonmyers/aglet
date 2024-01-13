@@ -1,6 +1,7 @@
 use aglet_pretty::{Pretty, Result, Writer};
 use colored::Color;
 
+use crate::tokenize::error::{Error, StackError};
 use crate::tokenize::state::State;
 use crate::tokenize::token::*;
 
@@ -22,6 +23,23 @@ impl Pretty for TokenStack {
 impl Pretty for Token {
     fn print(&self, w: &mut Writer<'_>) -> Result {
         self.pretty_print(None, None, w)
+    }
+}
+
+impl Pretty for StackError {
+    fn print(&self, w: &mut Writer<'_>) -> Result {
+        let stack = Some(format!("\t\u{2192} {:?}", self.stack));
+        w.print_token("Error", Some(self.span), stack, COLOR_ERROR)
+            .property(None, &self.cause.to_string(), None)
+            .finish()
+    }
+}
+
+impl Pretty for Error {
+    fn print(&self, w: &mut Writer<'_>) -> Result {
+        w.print_token("Error", Some(self.span), None, COLOR_ERROR)
+            .property(None, &self.cause.to_string(), None)
+            .finish()
     }
 }
 
@@ -242,9 +260,7 @@ impl Token {
                     "Name",
                     Some(self.span),
                     stack,
-                    if matches!(top_state, Some(State::ClassName)) {
-                        COLOR_CLASS_ITEM
-                    } else if matches!(top_state, Some(State::UnicodeProperties)) {
+                    if matches!(top_state, Some(State::ClassName | State::UnicodeProperties)) {
                         COLOR_CLASS_ITEM
                     } else {
                         None

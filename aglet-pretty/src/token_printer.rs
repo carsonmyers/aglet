@@ -3,8 +3,7 @@ use std::fmt::{self, Write};
 use aglet_text::Span;
 use colored::{Color, Colorize};
 
-use crate::Result;
-use crate::Writer;
+use crate::{Result, Writer};
 
 const DEFAULT_COLOR: Color = Color::White;
 const PARAMETER_COLOR: Color = Color::TrueColor {

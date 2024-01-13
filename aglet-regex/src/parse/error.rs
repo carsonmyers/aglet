@@ -1,6 +1,5 @@
 use std::convert::From;
-use std::fmt;
-use std::result;
+use std::{fmt, result};
 
 use aglet_text::Span;
 use thiserror::Error;
@@ -25,7 +24,7 @@ impl From<tokenize::Error> for Error {
     fn from(value: tokenize::Error) -> Self {
         Error {
             span: value.span,
-            kind: ErrorKind::TokenizeError(value.kind),
+            kind: ErrorKind::TokenizeError(value.cause),
         }
     }
 }
@@ -33,7 +32,7 @@ impl From<tokenize::Error> for Error {
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     #[error("tokenizer error: {0}")]
-    TokenizeError(tokenize::ErrorKind),
+    TokenizeError(tokenize::ErrorCause),
 
     #[error("unexpected end of input: expected {0}")]
     UnexpectedEOF(String),
@@ -50,7 +49,6 @@ pub enum ErrorKind {
     #[error("not implemented")]
     NotImplemented,
 }
-
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum TokenConvertError {

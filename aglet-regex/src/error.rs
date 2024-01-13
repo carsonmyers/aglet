@@ -1,5 +1,4 @@
-use crate::parse;
-use crate::tokenize;
+use crate::{parse, tokenize};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::tokenize::error::StateError;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StateStack {
     pub stack: Vec<StateFlags>,
 }
@@ -15,18 +15,14 @@ impl StateStack {
     }
 
     pub(crate) fn push(&mut self, state: State) {
-        let flags = self
-            .stack
-            .last()
-            .map(|sf| sf.flags.clone())
-            .unwrap_or(Flags::default());
+        let flags = self.stack.last().map(|sf| sf.flags).unwrap_or_default();
 
         self.stack.push(StateFlags { state, flags });
     }
 
     pub(crate) fn swap(&mut self, state: State) -> Result<State, StateError> {
         let former = self.stack.pop().ok_or(StateError::NoStateOnStack)?;
-        let flags = former.flags.clone();
+        let flags = former.flags;
 
         self.stack.push(StateFlags { state, flags });
         Ok(former.state)
@@ -85,7 +81,7 @@ impl fmt::Debug for StateStack {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     #[default]
     Main,
@@ -96,9 +92,9 @@ pub enum State {
     UnicodeProperties,
 }
 
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct Flags {
-    pub(crate) unset_flags: bool,
+    pub(crate) unset_flags:  bool,
     pub(crate) ignore_space: bool,
 }
 
@@ -113,7 +109,7 @@ impl fmt::Debug for Flags {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct StateFlags {
     state: State,
     flags: Flags,

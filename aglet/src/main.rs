@@ -57,7 +57,7 @@ impl Input {
                 .map(|res| res.map_err(|err| err.into()));
 
             Self {
-                input: Box::new(iter) as CliInput,
+                input:    Box::new(iter) as CliInput,
                 filename: input_path.to_string_lossy().to_string(),
                 is_stdin: false,
             }
@@ -67,9 +67,9 @@ impl Input {
                 .map(|res| res.map_err(|err| err.into()));
 
             Self {
-                input: Box::new(iter) as CliInput,
+                input:    Box::new(iter) as CliInput,
                 filename: "<stdin>".to_string(),
-                is_stdin: true
+                is_stdin: true,
             }
         };
 
