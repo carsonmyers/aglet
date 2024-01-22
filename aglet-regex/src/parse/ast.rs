@@ -2,10 +2,22 @@ use std::convert::TryFrom;
 use std::default::Default;
 
 use aglet_derive::DefaultWithSpan;
-use aglet_text::Span;
+use aglet_text::{Span, StringSpan};
 
 use crate::parse::error;
 use crate::tokenize::{self, TokenKind};
+
+macro_rules! unwrap_kind_fn {
+    ( $name:ident , $variant:path , $result:ty ) => {
+        pub fn $name(&self) -> Option<&$result> {
+            if let $variant($name) = &self.kind {
+                Some($name)
+            } else {
+                None
+            }
+        }
+    };
+}
 
 #[derive(Default, DefaultWithSpan, Debug)]
 pub struct ParseResult {
@@ -17,6 +29,51 @@ pub struct ParseResult {
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
+}
+
+impl Expr {
+    unwrap_kind_fn!(alternation, ExprKind::Alternation, Alternation);
+    unwrap_kind_fn!(concatenation, ExprKind::Concatenation, Concatenation);
+    unwrap_kind_fn!(repetition, ExprKind::Repetition, Repetition);
+    unwrap_kind_fn!(literal, ExprKind::Literal, char);
+    unwrap_kind_fn!(digit, ExprKind::Digit, bool);
+    unwrap_kind_fn!(whitespace, ExprKind::Whitespace, bool);
+    unwrap_kind_fn!(word_char, ExprKind::WordChar, bool);
+    unwrap_kind_fn!(boundary, ExprKind::Boundary, Boundary);
+    unwrap_kind_fn!(group, ExprKind::Group, Group);
+    unwrap_kind_fn!(class, ExprKind::Class, Class);
+
+    pub fn capturing_group(&self) -> Option<&CapturingGroup> {
+        let Some(group) = self.group() else {
+            return None;
+        };
+
+        group.capturing_group()
+    }
+
+    pub fn named_group(&self) -> Option<&NamedGroup> {
+        let Some(group) = self.group() else {
+            return None;
+        };
+
+        group.named_group()
+    }
+
+    pub fn non_capturing_group(&self) -> Option<&NonCapturingGroup> {
+        let Some(group) = self.group() else {
+            return None;
+        };
+
+        group.non_capturing_group()
+    }
+
+    pub fn flag_group(&self) -> Option<&FlagGroup> {
+        let Some(group) = self.group() else {
+            return None;
+        };
+
+        group.flag_group()
+    }
 }
 
 #[derive(Default, DefaultWithSpan, Debug)]
@@ -50,9 +107,10 @@ pub struct Concatenation {
 
 #[derive(Debug)]
 pub struct Repetition {
-    pub span: Span,
-    pub kind: RepetitionKind,
-    pub item: Box<Expr>,
+    pub span:   Span,
+    pub kind:   RepetitionKind,
+    pub greedy: bool,
+    pub item:   Box<Expr>,
 }
 
 #[derive(Debug)]
@@ -119,6 +177,17 @@ impl TryFrom<TokenKind> for BoundaryKind {
 pub struct Group {
     pub span: Span,
     pub kind: GroupKind,
+}
+
+impl Group {
+    unwrap_kind_fn!(capturing_group, GroupKind::Capturing, CapturingGroup);
+    unwrap_kind_fn!(named_group, GroupKind::Named, NamedGroup);
+    unwrap_kind_fn!(
+        non_capturing_group,
+        GroupKind::NonCapturing,
+        NonCapturingGroup
+    );
+    unwrap_kind_fn!(flag_group, GroupKind::Flags, FlagGroup);
 }
 
 #[derive(Default, DefaultWithSpan, Debug)]
@@ -309,10 +378,4 @@ impl TryFrom<&str> for PosixKind {
             )),
         }
     }
-}
-
-#[derive(Default, DefaultWithSpan, Debug)]
-pub struct StringSpan {
-    pub span:  Span,
-    pub value: String,
 }

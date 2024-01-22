@@ -1,4 +1,5 @@
 pub mod error;
+mod lowering;
 pub mod parse;
 pub mod tokenize;
 

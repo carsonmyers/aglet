@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-use aglet_text::Span;
+use aglet_text::{Span, StringSpan};
 
 use crate::parse::ast::*;
 use crate::parse::error::*;
@@ -26,10 +26,10 @@ use crate::tokenize::{self, Token, TokenKind};
 /// repetition ->
 ///     | item repetition-spec?
 /// repetition_spec ->
-///     | repetition_range
-///     | QUESTION
-///     | STAR
-///     | PLUS
+///     | repetition_range QUESTION?
+///     | QUESTION QUESTION?
+///     | STAR QUESTION?
+///     | PLUS QUESTION?
 /// repetition_range ->
 ///     | '{' repetition_range_contents '}'
 /// repetition_range_contents ->
@@ -77,9 +77,10 @@ use crate::tokenize::{self, Token, TokenKind};
 ///     | '&&' spec_item spec_set?
 /// ```
 pub struct Parser<'a> {
-    input:       Input<'a>,
-    group_index: usize,
-    errors:      Vec<Error>,
+    input:            Input<'a>,
+    group_index:      usize,
+    swap_greed_stack: Vec<bool>,
+    errors:           Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
@@ -92,19 +93,28 @@ impl<'a> Parser<'a> {
         T: Iterator<Item = tokenize::Result<Token>> + 'a,
     {
         Parser {
-            input:       Input::new(input),
-            group_index: 1,
-            errors:      Vec::new(),
+            input:            Input::new(input),
+            group_index:      1,
+            swap_greed_stack: Vec::new(),
+            errors:           Vec::new(),
         }
     }
 
     /// Parse the regular expression into a [syntax tree](Ast)
     pub fn parse(mut self) -> ParseResult {
         let res = self.parse_expr();
-        let ast = self.ok_or_default(res);
 
         let mut errors = self.errors;
+        let ast = match res {
+            Ok(expr) => expr,
+            Err(err) => {
+                errors.push(err);
+                Default::default()
+            },
+        };
+
         errors.extend_from_slice(self.input.errors());
+        errors.reverse();
 
         ParseResult { ast, errors }
     }
@@ -223,10 +233,10 @@ impl<'a> Parser<'a> {
     /// repetition ->
     ///     | item repetition-spec?
     /// repetition_spec ->
-    ///     | repetition_range
-    ///     | QUESTION
-    ///     | STAR
-    ///     | PLUS
+    ///     | repetition_range QUESTION?
+    ///     | QUESTION QUESTION?
+    ///     | STAR QUESTION?
+    ///     | PLUS QUESTION?
     /// repetition_range ->
     ///     | '{' repetition_range_contents '}'
     /// repetition_range_contents ->
@@ -242,10 +252,15 @@ impl<'a> Parser<'a> {
         // so matching a repetition specifier is optional. When not present, the sub-item
         // will pass through instead of a repetition expr
         if let Some(kind) = self.parse_repetition_spec()? {
+            let swap_greedy = matches!(self.swap_greed_stack.last(), Some(&true));
+            let non_greedy_token = self.input.match_where(TokenKind::is_question)?.is_some();
+            let greedy = non_greedy_token == swap_greedy;
+
             let span = Span::new(item.span.start, self.input.position());
             let repetition = Repetition {
                 span,
                 kind,
+                greedy,
                 item: Box::new(item),
             };
 
@@ -269,10 +284,10 @@ impl<'a> Parser<'a> {
     ///
     /// ```grammar
     /// repetition_spec ->
-    ///     | repetition_range
-    ///     | QUESTION
-    ///     | STAR
-    ///     | PLUS
+    ///     | repetition_range QUESTION?
+    ///     | QUESTION QUESTION?
+    ///     | STAR QUESTION?
+    ///     | PLUS QUESTION?
     /// repetition_range ->
     ///     | '{' repetition_range_contents '}'
     /// repetition_range_contents ->
@@ -289,32 +304,23 @@ impl<'a> Parser<'a> {
 
     /// Parse the zero-or-one quantity specifier (`?`)
     pub fn parse_question(&mut self) -> Result<Option<RepetitionKind>> {
-        if self.input.has_where(TokenKind::is_question)? {
-            self.input.next();
-            Ok(Some(RepetitionKind::ZeroOrOne))
-        } else {
-            Ok(None)
-        }
+        self.input
+            .match_where(TokenKind::is_question)
+            .map(|option| option.map(|_| RepetitionKind::ZeroOrOne))
     }
 
     /// Parse the zero-or-more quantity specifier (`*`)
     pub fn parse_star(&mut self) -> Result<Option<RepetitionKind>> {
-        if self.input.has_where(TokenKind::is_star)? {
-            self.input.next();
-            Ok(Some(RepetitionKind::ZeroOrMore))
-        } else {
-            Ok(None)
-        }
+        self.input
+            .match_where(TokenKind::is_star)
+            .map(|option| option.map(|_| RepetitionKind::ZeroOrMore))
     }
 
     /// Parse the one-or-more quantity specifier (`+`)
     pub fn parse_plus(&mut self) -> Result<Option<RepetitionKind>> {
-        if self.input.has_where(TokenKind::is_plus)? {
-            self.input.next();
-            Ok(Some(RepetitionKind::OneOrMore))
-        } else {
-            Ok(None)
-        }
+        self.input
+            .match_where(TokenKind::is_plus)
+            .map(|option| option.map(|_| RepetitionKind::OneOrMore))
     }
 
     /// Parse a specified range for a repetition
@@ -395,27 +401,31 @@ impl<'a> Parser<'a> {
     ///     | class
     /// ```
     pub fn parse_item(&mut self) -> Result<Option<Expr>> {
-        let item = self.parse_alts(vec![
-            Self::parse_dot,
-            Self::parse_literal,
-            Self::parse_digit_class,
-            Self::parse_whitespace_class,
-            Self::parse_word_class,
-            Self::parse_boundary,
-            Self::parse_group,
-            Self::parse_class,
-        ])?;
+        loop {
+            let item = self.parse_alts(vec![
+                Self::parse_dot,
+                Self::parse_literal,
+                Self::parse_digit_class,
+                Self::parse_whitespace_class,
+                Self::parse_word_class,
+                Self::parse_boundary,
+                Self::parse_group,
+                Self::parse_class,
+            ])?;
 
-        // Valid tokens to follow an item come from those productions that can consume an item,
-        // in particular groups and alternation
-        if item.is_none() {
-            match self.input.peek_kind() {
-                Some(Ok(TokenKind::CloseGroup | TokenKind::Alternate)) => Ok(None),
-                Some(Ok(_)) => Err(self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal")),
-                _ => Ok(None),
+            if item.is_some() {
+                return Ok(item);
             }
-        } else {
-            Ok(item)
+
+            if matches!(
+                self.input.peek_kind(),
+                None | Some(Ok(TokenKind::CloseGroup | TokenKind::Alternate)),
+            ) {
+                return Ok(None);
+            }
+
+            let error = self.illegal_tok("`.`, `[`, `(`, boundary, class, or literal");
+            self.errors.push(error);
         }
     }
 
@@ -652,12 +662,32 @@ impl<'a> Parser<'a> {
             })
         } else {
             let flags = self.parse_flags()?;
+            let new_swap_stack_entry = if let Some(flags) = &flags {
+                if flags.set_flags.contains(&FlagKind::SwapGreed) {
+                    Some(true)
+                } else if flags.clear_flags.contains(&FlagKind::SwapGreed) {
+                    Some(false)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             if self
                 .input
                 .match_where(TokenKind::is_close_group_options)?
                 .is_some()
             {
+                if let Some(entry) = new_swap_stack_entry {
+                    self.swap_greed_stack.push(entry);
+                }
+
                 let expr = self.parse_expr()?;
+
+                if new_swap_stack_entry.is_some() {
+                    self.swap_greed_stack.pop();
+                }
 
                 GroupKind::NonCapturing(NonCapturingGroup {
                     span: expr.span,
@@ -670,6 +700,16 @@ impl<'a> Parser<'a> {
                     set_flags:   Vec::new(),
                     clear_flags: Vec::new(),
                 });
+
+                if let Some(entry) = new_swap_stack_entry {
+                    let stack_size = self.swap_greed_stack.len();
+                    if stack_size > 0 {
+                        let greed = self.swap_greed_stack.get_mut(stack_size - 1).unwrap();
+                        *greed = entry;
+                    } else {
+                        self.swap_greed_stack.push(entry);
+                    }
+                }
 
                 GroupKind::Flags(FlagGroup { flags })
             }
@@ -1558,24 +1598,43 @@ mod tests {
             TokenKind::Dot,
             TokenKind::Question,
             TokenKind::Literal('a'),
-            TokenKind::OpenBrace,
-            TokenKind::Number(2),
-            TokenKind::Comma,
-            TokenKind::Number(3),
-            TokenKind::CloseBrace,
+            TokenKind::Star,
+            TokenKind::Question,
             TokenKind::Literal('b'),
+            TokenKind::OpenBrace,
+            TokenKind::Number(1),
+            TokenKind::Comma,
+            TokenKind::Number(2),
+            TokenKind::CloseBrace,
+            TokenKind::Literal('c'),
+            TokenKind::Star,
+            TokenKind::Star,
+            TokenKind::Literal('d'),
+            TokenKind::OpenBrace,
+            TokenKind::CloseBrace,
+            TokenKind::Plus,
         ]));
 
         let rep = get_repetition(p.parse_repetition());
         assert!(matches!(rep.kind, RepetitionKind::ZeroOrOne));
+        assert!(rep.greedy);
         assert!(matches!(rep.item.kind, ExprKind::Any));
 
         let rep = get_repetition(p.parse_repetition());
-        assert!(matches!(rep.kind, RepetitionKind::Range(_)));
+        assert!(matches!(rep.kind, RepetitionKind::ZeroOrMore));
+        assert!(!rep.greedy);
         assert!(matches!(rep.item.kind, ExprKind::Literal('a')));
 
-        let expr = unwrap_parse(p.parse_repetition());
-        assert!(matches!(expr.kind, ExprKind::Literal('b')));
+        let rep = get_repetition(p.parse_repetition());
+        assert!(matches!(rep.kind, RepetitionKind::Range(_)));
+        assert!(matches!(rep.item.kind, ExprKind::Literal('b')));
+
+        let concat = get_concatenation(p.parse_concatenation());
+        assert_eq!(concat.items.len(), 2);
+        assert_kind!(concat.items[0], ExprKind::Repetition(_));
+        assert_kind!(concat.items[1], ExprKind::Repetition(_));
+
+        assert_eq!(p.errors.len(), 2);
 
         // TODO: detect stray repetition tokens where they don't belong
     }
@@ -1716,7 +1775,10 @@ mod tests {
         assert_kind!(expr, ExprKind::Class(_));
 
         let res = p.parse_item();
-        assert_err!(res, ErrorKind::UnexpectedToken(TokenKind::Star, _));
+        assert!(matches!(res, Ok(None)));
+
+        assert_eq!(p.errors.len(), 1);
+        assert_kind!(p.errors[0], ErrorKind::UnexpectedToken(TokenKind::Star, _));
     }
 
     #[test]
@@ -1840,13 +1902,13 @@ mod tests {
         ]));
 
         let res = p.parse_group();
-        assert!(matches!(
-            res,
-            Err(Error {
-                kind: ErrorKind::UnexpectedToken(TokenKind::CloseBracket, _),
-                ..
-            })
-        ));
+        assert_err!(res, ErrorKind::UnexpectedEOF(_));
+
+        assert_eq!(p.errors.len(), 1);
+        assert_kind!(
+            p.errors[0],
+            ErrorKind::UnexpectedToken(TokenKind::CloseBracket, _)
+        );
     }
 
     #[test]
@@ -1917,20 +1979,6 @@ mod tests {
 
         assert_eq!(name.value, "name".to_string());
         assert_kind!(expr, ExprKind::Concatenation(_));
-
-        let mut p = Parser::new(token_iter(vec![
-            TokenKind::OpenGroupOptions,
-            TokenKind::OpenGroupName,
-            TokenKind::Name("name".to_string()),
-            TokenKind::CloseGroupName,
-            TokenKind::CloseGroupOptions,
-        ]));
-
-        let res = p.parse_group_with_header();
-        assert_err!(
-            res,
-            ErrorKind::UnexpectedToken(TokenKind::CloseGroupOptions, _)
-        );
 
         let mut p = Parser::new(token_iter(vec![
             TokenKind::OpenGroupOptions,
@@ -2039,6 +2087,83 @@ mod tests {
         for (expected_flag, actual_flag) in expected_clear.into_iter().zip(flags.clear_flags) {
             assert_eq!(expected_flag, actual_flag);
         }
+    }
+
+    #[test]
+    fn swap_greed() {
+        let mut p = Parser::new(token_iter(vec![
+            TokenKind::OpenGroup,
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::CloseGroupOptions,
+            TokenKind::Dot,
+            TokenKind::Plus,
+            TokenKind::Question,
+            TokenKind::OpenGroup,
+            TokenKind::OpenGroupOptions,
+            TokenKind::FlagDelimiter,
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::CloseGroupOptions,
+            TokenKind::Dot,
+            TokenKind::Star,
+            TokenKind::Question,
+            TokenKind::OpenGroup,
+            TokenKind::OpenGroupOptions,
+            TokenKind::Flag(Flag::SwapGreed),
+            TokenKind::CloseGroup,
+            TokenKind::Dot,
+            TokenKind::Question,
+            TokenKind::Question,
+            TokenKind::CloseGroup,
+            TokenKind::Dot,
+            TokenKind::Question,
+            TokenKind::Question,
+            TokenKind::Dot,
+            TokenKind::Question,
+            TokenKind::CloseGroup,
+        ]));
+
+        let group = get_group(p.parse_group());
+
+        let non_capturing = group.non_capturing_group().unwrap();
+        let flags = non_capturing.flags.as_ref().unwrap();
+        assert_eq!(flags.set_flags.len(), 1);
+        assert_eq!(flags.clear_flags.len(), 0);
+        assert_eq!(flags.set_flags[0], FlagKind::SwapGreed);
+
+        let concat = non_capturing.expr.concatenation().unwrap();
+        let items = &concat.items;
+        assert_eq!(items.len(), 4);
+
+        let repetition = items[0].repetition().unwrap();
+        assert!(repetition.greedy);
+
+        let repetition = items[2].repetition().unwrap();
+        assert!(repetition.greedy);
+
+        let repetition = items[3].repetition().unwrap();
+        assert!(!repetition.greedy);
+
+        let non_capturing = items[1].non_capturing_group().unwrap();
+        let flags = non_capturing.flags.as_ref().unwrap();
+        assert_eq!(flags.set_flags.len(), 0);
+        assert_eq!(flags.clear_flags.len(), 1);
+        assert_eq!(flags.clear_flags[0], FlagKind::SwapGreed);
+
+        let concat = non_capturing.expr.concatenation().unwrap();
+        let items = &concat.items;
+        assert_eq!(items.len(), 3);
+
+        let repetition = items[0].repetition().unwrap();
+        assert!(!repetition.greedy);
+
+        let flag_group = items[1].flag_group().unwrap();
+        assert_eq!(flag_group.flags.set_flags.len(), 1);
+        assert_eq!(flag_group.flags.clear_flags.len(), 0);
+        assert_eq!(flag_group.flags.set_flags[0], FlagKind::SwapGreed);
+
+        let repetition = items[2].repetition().unwrap();
+        assert!(repetition.greedy);
     }
 
     #[test]

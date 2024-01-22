@@ -8,7 +8,7 @@ use std::default::Default;
 pub use cursor::Cursor;
 pub use error::Error;
 pub use source_map::{FileId, SourceFile, SourceMap};
-pub use span::{FilePosition, FileSpan, Span};
+pub use span::{FilePosition, FileSpan, Span, StringSpan};
 
 pub trait DefaultWithSpan
 where

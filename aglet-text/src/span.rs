@@ -2,8 +2,9 @@ use std::default::Default;
 use std::fmt;
 
 use crate::source_map::FileId;
+use crate::DefaultWithSpan;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end:   usize,
@@ -31,12 +32,6 @@ impl fmt::Debug for Span {
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{}", self.start, self.end)
-    }
-}
-
-impl Default for Span {
-    fn default() -> Self {
-        Self { start: 0, end: 0 }
     }
 }
 
@@ -77,5 +72,20 @@ impl fmt::Debug for FilePosition {
 impl fmt::Display for FilePosition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.line, self.column)
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct StringSpan {
+    pub span:  Span,
+    pub value: String,
+}
+
+impl DefaultWithSpan for StringSpan {
+    fn default_with_span(span: Span) -> Self {
+        Self {
+            span,
+            ..Default::default()
+        }
     }
 }

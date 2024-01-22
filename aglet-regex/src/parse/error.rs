@@ -2,7 +2,6 @@ use std::convert::From;
 use std::{fmt, result};
 
 use aglet_text::Span;
-use thiserror::Error;
 
 use crate::tokenize;
 
@@ -29,7 +28,7 @@ impl From<tokenize::Error> for Error {
     }
 }
 
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     #[error("tokenizer error: {0}")]
     TokenizeError(tokenize::ErrorCause),
@@ -50,7 +49,7 @@ pub enum ErrorKind {
     NotImplemented,
 }
 
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[derive(thiserror::Error, Clone, Debug, Eq, PartialEq)]
 pub enum TokenConvertError {
     #[error("invalid token for boundary: {0:?}")]
     InvalidTokenForBoundary(tokenize::TokenKind),

@@ -102,20 +102,24 @@ impl Pretty for Repetition {
         match &self.kind {
             RepetitionKind::ZeroOrOne => w
                 .print_ast("ZeroOrOne", Some(self.span), COLOR_REPETITION)
+                .property(Some("greedy"), &self.greedy, None)
                 .child(None, &*self.item)
                 .finish(),
             RepetitionKind::ZeroOrMore => w
                 .print_ast("ZeroOrMore", Some(self.span), COLOR_REPETITION)
+                .property(Some("greedy"), &self.greedy, None)
                 .child(None, &*self.item)
                 .finish(),
             RepetitionKind::OneOrMore => w
                 .print_ast("OneOrMore", Some(self.span), COLOR_REPETITION)
+                .property(Some("greedy"), &self.greedy, None)
                 .child(None, &*self.item)
                 .finish(),
             RepetitionKind::Range(range) => w
                 .print_ast("Range", Some(self.span), COLOR_REPETITION)
                 .property(Some("start"), &range.start.unwrap_or(0), None)
                 .maybe_property(Some("end"), range.end.as_ref(), None)
+                .property(Some("greedy"), &self.greedy, None)
                 .child(None, &*self.item)
                 .finish(),
         }

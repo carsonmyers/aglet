@@ -27,7 +27,7 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn second(&self) -> Option<char> {
-        self.src.clone().skip(1).next()
+        self.src.clone().nth(1)
     }
 
     pub fn next(&mut self) -> Option<char> {
@@ -47,9 +47,8 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn bump(&mut self) {
-        match self.src.next() {
-            Some(_) => self.n += 1,
-            _ => (),
+        if self.src.next().is_some() {
+            self.n += 1;
         }
     }
 
