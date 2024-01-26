@@ -7,5 +7,6 @@ members = [
 	"aglet-regex",
 	"aglet-text",
 	"aglet-test",
+	"aglet-unicode",
 ]
 

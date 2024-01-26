@@ -1,0 +1,6 @@
+[package]
+name = "aglet-unicode"
+version = "0.1.0"
+authors = ["Carson Myers <carson@myers.se>"]
+edition = "2021"
+
