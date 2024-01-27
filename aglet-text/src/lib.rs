@@ -1,5 +1,5 @@
 mod cursor;
-mod char_range;
+mod char_group;
 mod error;
 mod source_map;
 mod span;
