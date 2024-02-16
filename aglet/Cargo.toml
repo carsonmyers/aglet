@@ -5,24 +5,20 @@ description = "Parser generator and language building tools"
 repository = "https://github.com/carsonmyers/aglet"
 readme = "../README.md"
 license-file = "../LICENSE.md"
-keywords = ["parser", "lexer", "generator", "compiler", "language", "grammar", "lex", "yacc"]
+keywords = ["parser", "lexer", "generator", "compiler", "grammar"]
 categories = ["parsing"]
 authors = ["Carson Myers <carson@myers.se>"]
 workspace = ".."
-edition = "2018"
-
-[lib]
-name = "aglet"
-path = "src/lib.rs"
+edition = "2021"
 
 [[bin]]
-name = "aglet"
+name = "ag"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.1.13", features = ["derive"] }
-color-eyre = "~0.5"
-itertools = "0.10.5"
+color-eyre = "0.6.2"
+itertools = "0.12.0"
 thiserror = "^1"
 aglet-regex = { path = "../aglet-regex" }
 aglet-text = { path = "../aglet-text" }

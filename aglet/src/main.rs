@@ -5,11 +5,12 @@ use std::io::{self, BufRead};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use commands::regex::RegexArgs;
 use eyre::Result;
 
+use crate::commands::regex::RegexArgs;
+
 #[derive(Parser, Debug)]
-#[command(name = "aglet")]
+#[command(name = "ag")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
