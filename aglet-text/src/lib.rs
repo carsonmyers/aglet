@@ -1,11 +1,12 @@
-mod cursor;
 mod char_group;
+mod cursor;
 mod error;
 mod source_map;
 mod span;
 
 use std::default::Default;
 
+pub use char_group::{CharGroup, CharRange};
 pub use cursor::Cursor;
 pub use error::Error;
 pub use source_map::{FileId, SourceFile, SourceMap};
