@@ -20,6 +20,27 @@ pub fn non_space(input: &str) -> Result<&str> {
     take_while1(|c: char| !c.is_whitespace())(input)
 }
 
+pub fn identifier(input: &str) -> Result<&str> {
+    use nom::branch::alt;
+    use nom::bytes::complete::tag;
+    use nom::character::complete::{alpha1, alphanumeric1};
+    use nom::combinator::recognize;
+    use nom::multi::many0_count;
+    use nom::sequence::pair;
+
+    recognize(pair(
+        alt((alpha1, tag("_"))),
+        many0_count(alt((alphanumeric1, tag("_")))),
+    ))(input)
+}
+pub fn comment(input: &str) -> Result<&str> {
+    use nom::bytes::complete::tag;
+    use nom::combinator::rest;
+    use nom::sequence::preceded;
+
+    preceded(skip_space, preceded(tag("#"), rest))(input)
+}
+
 pub fn month(input: &str) -> Result<&str> {
     use nom::branch::alt;
     use nom::bytes::complete::tag_no_case;

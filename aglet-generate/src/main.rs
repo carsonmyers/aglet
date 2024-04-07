@@ -1,4 +1,6 @@
 mod parse;
+mod progress;
+mod task;
 mod unicode;
 
 use clap::{Parser, Subcommand};

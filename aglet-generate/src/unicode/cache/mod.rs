@@ -1,5 +1,7 @@
 mod cached_value;
+mod hash_files;
 mod metadata;
+mod phase;
 mod stored_version;
 
 use std::path::{Path, PathBuf};
@@ -9,7 +11,9 @@ use rand::distributions::{Alphanumeric, DistString};
 use tokio::fs;
 
 use super::UnicodeVersion;
+pub use hash_files::HashFiles;
 pub use metadata::Metadata;
+pub use phase::HashPhase;
 pub use stored_version::{StoredVersion, StoredVersionTag};
 
 #[derive(Debug)]
@@ -91,12 +95,19 @@ impl Cache {
 
     pub async fn intern_version<P: AsRef<Path>>(
         &mut self,
+        local: P,
         version: UnicodeVersion,
+        hash: String,
         tag: Option<StoredVersionTag>,
-        tmp_dir: P,
     ) -> eyre::Result<()> {
-        let hash = hash_version(&tmp_dir).await?;
-        fs::rename(tmp_dir, self.path.join("data").join(&hash)).await?;
+        let local = local.as_ref();
+
+        let cache_path = self.path.join("data").join(&hash);
+        if cache_path.is_dir() {
+            return Ok(());
+        }
+
+        fs::rename(local, cache_path).await?;
         let stored_entry = StoredVersion::new_current(version, hash, tag);
 
         for existing in self.metadata.stored_versions.iter_mut() {
@@ -119,21 +130,4 @@ impl Cache {
     async fn write_metadata(&mut self) -> eyre::Result<()> {
         self.metadata.write(self.path.join("metadata.toml")).await
     }
-}
-
-async fn hash_version<P: AsRef<Path>>(path: P) -> eyre::Result<String> {
-    let path = path.as_ref().to_path_buf();
-    tokio::task::spawn_blocking(move || -> eyre::Result<String> {
-        let mut file = Vec::new();
-
-        {
-            let mut ar = tar::Builder::new(&mut file);
-            ar.mode(tar::HeaderMode::Deterministic);
-            ar.append_dir_all("ucd", path)?;
-            ar.finish()?
-        }
-
-        Ok(sha256::digest(&file))
-    })
-    .await?
 }

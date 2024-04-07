@@ -1,6 +1,9 @@
 mod download;
 mod entry_meta;
 pub mod ftp;
+mod phase;
+mod pool;
+mod versions;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -11,7 +14,9 @@ use eyre::{eyre, OptionExt};
 
 use crate::unicode::remote::entry_meta::Entry;
 use crate::unicode::UnicodeVersion;
-pub use download::{Download, DownloadState};
+pub use download::*;
+pub use phase::*;
+pub use versions::*;
 
 pub async fn list_versions(ftp: &mut FtpStream) -> eyre::Result<Vec<UnicodeVersion>> {
     let mut versions = ftp::list(ftp, "/Public")

@@ -1,9 +1,11 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
+use eyre::eyre;
 use serde::{Deserialize, Serialize};
 
 use super::UnicodeVersion;
+use crate::unicode::SelectVersion;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct StoredVersion {
@@ -40,4 +42,16 @@ pub enum StoredVersionTag {
     Current,
     Latest,
     Draft,
+}
+
+impl TryFrom<SelectVersion> for StoredVersionTag {
+    type Error = eyre::Report;
+
+    fn try_from(value: SelectVersion) -> Result<Self, Self::Error> {
+        match &value {
+            SelectVersion::Draft => Ok(Self::Draft),
+            SelectVersion::Latest => Ok(Self::Latest),
+            _ => Err(eyre!("No tag for {}", &value)),
+        }
+    }
 }

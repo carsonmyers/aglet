@@ -15,7 +15,7 @@ impl Entry {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::branch::alt;
         use nom::bytes::complete::tag;
-        use nom::combinator::{map, rest};
+        use nom::combinator::map;
         use nom::sequence::preceded;
 
         alt((
