@@ -9,6 +9,7 @@ use eyre::eyre;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
+use tracing::info;
 
 use crate::progress::stats::{ImmediateFileStats, ImmediateStats, StatsSlots};
 use crate::task::TaskCounter;
@@ -78,14 +79,28 @@ impl EnumerateRemoteFiles {
         tx_dirs.send(vec![]).await?;
 
         let counter = TaskCounter::new();
+        let mut directory_count = 0usize;
 
         loop {
             // keep reading new dirs through the channel until the reader is closed or the counter
             // notifies that all tasks have finished (so no new dirs will be produced)
-            let prefix = tokio::select! {
-                Some(prefix) = rx_dirs.recv() => prefix,
-                _ = counter.wait_finish() => if rx_dirs.is_empty() { break } else { continue },
-                else => break,
+            let prefix = tokio::select! { biased;
+                _ = counter.wait_finish() => if rx_dirs.is_empty() {
+                    info!("finish enumeration: no more threads or prefixes");
+                    break
+                } else {
+                    info!("no threads running, but receiver is not empty: continue");
+                    continue
+                },
+                Some(prefix) = rx_dirs.recv() => {
+                    info!("rx prefix {:?} [{} msgs]", &prefix, rx_dirs.len());
+                    directory_count += 1;
+                    prefix
+                },
+                else => {
+                    info!("finish enumeration: receiver is closed");
+                    break
+                },
             };
 
             let remote = if prefix.is_empty() {
@@ -114,6 +129,7 @@ impl EnumerateRemoteFiles {
                 for new_dir in new_dirs {
                     let mut new_prefix = prefix.clone();
                     new_prefix.push(new_dir.name);
+                    //info!("tx prefix: {:?}", &new_prefix);
                     tx_dirs.send(new_prefix).await.expect("can send dir");
                 }
 
@@ -129,7 +145,10 @@ impl EnumerateRemoteFiles {
                         local: local.join(&file.name),
                         size: file.size,
                     })
-                    .inspect(|file| stats.add_file(file.size))
+                    .inspect(|file| {
+                        info!("add file {}", &file.remote);
+                        stats.add_file(file.size)
+                    })
                     .collect::<Vec<_>>();
 
                 // resolve to the new files found at this prefix; the prefix is also included
@@ -139,6 +158,7 @@ impl EnumerateRemoteFiles {
 
             // when there all tasks are finished, close the reader so the loop can break
             if rx_dirs.is_empty() && counter.finished() {
+                info!("close receiver: no tasks running and receiver is empty");
                 rx_dirs.close();
             }
         }
@@ -148,12 +168,16 @@ impl EnumerateRemoteFiles {
             self.files.append(&mut res??);
         }
 
+        info!(
+            "gathered {} files from {} directories",
+            self.files.len(),
+            directory_count
+        );
         Ok(DownloadRemoteFiles::new(self))
     }
 }
 
 pub struct DownloadRemoteFiles {
-    options: Arc<DownloadOptions>,
     pool: Arc<Pool>,
     files: Vec<TargetFile>,
     stats: Arc<ImmediateStats>,
@@ -165,7 +189,6 @@ impl DownloadRemoteFiles {
         let max_connections = stage.options.max_connections;
 
         Self {
-            options: stage.options,
             pool: stage.pool,
             files: stage.files,
             stats: stage.stats,

@@ -5,6 +5,8 @@ mod unicode;
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use tracing::warn;
+use tracing_subscriber::filter::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(name = "ag-gen")]
@@ -23,6 +25,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_env("AGLET_LEVEL"))
+        .init();
+
     color_eyre::install()?;
 
     let args = Cli::parse();

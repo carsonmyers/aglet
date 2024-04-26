@@ -26,7 +26,7 @@ impl UnicodeArgs {
         match &self.command {
             Commands::Show(args) => args,
             Commands::List(args) => &args.common,
-            Commands::Fetch(args) => args,
+            Commands::Fetch(args) => &args.common,
             Commands::Generate(args) => &args.common,
         }
     }
@@ -91,7 +91,7 @@ enum Commands {
     #[command(name = "list")]
     List(list::ListArgs),
     #[command(name = "fetch")]
-    Fetch(CommonArgs),
+    Fetch(fetch::FetchArgs),
     #[command(name = "generate")]
     Generate(generate::GenerateArgs),
 }

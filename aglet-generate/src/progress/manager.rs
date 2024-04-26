@@ -3,7 +3,6 @@ use console::style;
 use indicatif::{MultiProgress, ProgressBar};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
 
 use crate::progress::phase::{phase, Phase};
@@ -95,7 +94,7 @@ impl ProgressState {
         self.clear();
 
         if let Some(msg) = self.phase.finish() {
-            eprintln!("\u{2713} {}", style(msg).green());
+            eprintln!("\u{2713} {}", style(msg).bright().green());
         };
 
         for bar in phase.init() {
@@ -124,6 +123,10 @@ impl ProgressState {
     fn finish(&mut self, duration: chrono::Duration) {
         self.clear();
 
+        if let Some(msg) = self.phase.finish() {
+            eprintln!("\u{2713} {}", style(msg).bright().green());
+        };
+
         let formatted = [
             duration.num_hours(),
             duration.num_minutes() % 60,
@@ -140,7 +143,10 @@ impl ProgressState {
             _ => formatted.join(":"),
         };
 
-        eprintln!("\u{2713} Finished in {}", formatted);
+        eprintln!(
+            "\u{2713} {}",
+            style(format!("Finished in {}", formatted)).bright().green()
+        );
     }
 
     fn clear(&mut self) {

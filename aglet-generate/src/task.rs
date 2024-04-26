@@ -1,7 +1,8 @@
-use console::style;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
 use tokio::sync::Notify;
+use tracing::debug;
 
 pub struct TaskCounter {
     state: Arc<SharedCounterState>,
@@ -18,7 +19,8 @@ impl TaskCounter {
     }
 
     pub fn count_task(&self) -> CountedTask {
-        self.state.count.fetch_add(1, Ordering::SeqCst);
+        let original = self.state.count.fetch_add(1, Ordering::SeqCst);
+        debug!("add task {} -> {}", original, original + 1);
 
         CountedTask {
             state: self.state.clone(),
@@ -45,7 +47,10 @@ pub struct CountedTask {
 
 impl Drop for CountedTask {
     fn drop(&mut self) {
-        if self.state.count.fetch_sub(1, Ordering::SeqCst) == 1 {
+        let original = self.state.count.fetch_sub(1, Ordering::SeqCst);
+        debug!("drop task {} -> {}", original, original - 1);
+        if original == 1 {
+            debug!("no tasks running: notify owner");
             self.state.notify.notify_one();
         };
     }

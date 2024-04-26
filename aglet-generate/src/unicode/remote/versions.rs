@@ -32,7 +32,7 @@ impl ResolveSelectedVersion {
         self.resolved_version.clone()
     }
 
-    pub async fn resolve_selected_version(mut self) -> eyre::Result<UnicodeVersion> {
+    pub async fn resolve_selected_version(self) -> eyre::Result<UnicodeVersion> {
         let pool = self.pool.clone();
         let remote_versions: JoinHandle<eyre::Result<_>> = tokio::spawn(async move {
             let mut ftp = pool.get().await?;
