@@ -1,29 +1,26 @@
-use eyre::Context;
 use std::path::Path;
 
-use crate::unicode::UnicodeVersion;
+use eyre::Context;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tracing::info;
 
-use super::cached_value::CachedValue;
-use super::stored_version::StoredVersion;
+use crate::cache::cached_value::CachedValue;
+use crate::cache::stored_version::StoredVersion;
+use crate::ftp::RemoteVersion;
+use crate::unicode::UnicodeVersion;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Metadata {
     #[serde(with = "toml_datetime_compat")]
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at:      chrono::DateTime<chrono::Utc>,
     #[serde(default)]
-    pub remote_listing: CachedValue<RemoteListing>,
+    pub remote_listing:  CachedValue<Vec<RemoteVersion>>,
     #[serde(default)]
     pub stored_versions: Vec<StoredVersion>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RemoteListing {
-    pub versions: Vec<UnicodeVersion>,
-    pub latest: UnicodeVersion,
-    pub draft: UnicodeVersion,
+    #[serde(default)]
+    pub use_version:     Option<UnicodeVersion>,
 }
 
 impl Metadata {
@@ -36,6 +33,7 @@ impl Metadata {
 
         Ok(metadata)
     }
+
     pub async fn write<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<()> {
         self.updated_at = chrono::Utc::now();
 
@@ -54,16 +52,27 @@ impl Metadata {
             .await
             .wrap_err("could not flush metadata contents to file")?;
 
+        info!("write metadata file {}", path.as_ref().display());
+
         Ok(())
+    }
+
+    pub fn versions(&self) -> Vec<UnicodeVersion> {
+        self.stored_versions
+            .iter()
+            .filter(|v| v.is_current() && v.is_valid())
+            .map(|v| v.version)
+            .collect()
     }
 }
 
 impl Default for Metadata {
     fn default() -> Self {
         Self {
-            updated_at: chrono::Utc::now(),
-            remote_listing: Default::default(),
+            updated_at:      chrono::Utc::now(),
+            remote_listing:  Default::default(),
             stored_versions: Default::default(),
+            use_version:     Default::default(),
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
 use eyre::{eyre, Error};
@@ -12,10 +12,6 @@ const MIN_MODERN_VERSION: UnicodeVersion = UnicodeVersion(4, 1, 0);
 pub struct UnicodeVersion(u8, u8, u8);
 
 impl UnicodeVersion {
-    pub fn new(major: u8, minor: u8, update: u8) -> Self {
-        Self(major, minor, update)
-    }
-
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::branch::alt;
 
@@ -71,6 +67,7 @@ impl UnicodeVersion {
         }
     }
 
+    #[allow(unused)]
     pub fn unicode_data_filename(&self) -> String {
         match self {
             Self(x, y, z) if self < &MIN_MODERN_VERSION => {
@@ -140,5 +137,34 @@ impl<'de> serde::Deserialize<'de> for UnicodeVersion {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_str(UnicodeVersionVisitor)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum SelectVersion {
+    Latest,
+    Draft,
+    Version(UnicodeVersion),
+}
+
+impl Display for SelectVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Latest => write!(f, "latest"),
+            Self::Draft => write!(f, "draft"),
+            Self::Version(v) => write!(f, "{}", v),
+        }
+    }
+}
+
+impl FromStr for SelectVersion {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "latest" => Ok(SelectVersion::Latest),
+            "draft" => Ok(SelectVersion::Draft),
+            value => Ok(SelectVersion::Version(UnicodeVersion::from_str(value)?)),
+        }
     }
 }

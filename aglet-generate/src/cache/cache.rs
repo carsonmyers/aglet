@@ -1,31 +1,29 @@
-mod cached_value;
-mod hash_files;
-mod metadata;
-mod phase;
-mod stored_version;
-
 use std::path::{Path, PathBuf};
 
+use chrono::Duration;
 use eyre::eyre;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::fs;
+use tracing::{error, info};
 
-use super::UnicodeVersion;
-pub use hash_files::HashFiles;
-pub use metadata::Metadata;
-pub use phase::HashPhase;
-pub use stored_version::{StoredVersion, StoredVersionTag};
+use crate::cache::{Metadata, StoredVersion, StoredVersionTag};
+use crate::unicode::UnicodeVersion;
+
+pub const LATEST_VERSION_TTL: Duration = Duration::weeks(6);
+pub const DRAFT_VERSION_TTL: Duration = Duration::weeks(1);
+pub const FORMER_VERSION_TTL: Duration = Duration::weeks(52);
+pub const REMOTE_LISTING_TTL: Duration = Duration::days(15);
 
 #[derive(Debug)]
 pub struct Cache {
-    path: PathBuf,
+    path:         PathBuf,
     pub metadata: Metadata,
 }
 
 impl Cache {
     pub fn new<P: Into<PathBuf>>(path: P) -> Self {
         Self {
-            path: path.into(),
+            path:     path.into(),
             metadata: Default::default(),
         }
     }
@@ -33,7 +31,10 @@ impl Cache {
     pub async fn init<P: Into<PathBuf>>(path: P) -> eyre::Result<Self> {
         let mut cache = Self::new(path);
 
+        info!("initialize cache at {}", &cache.path.display());
+
         if fs::try_exists(&cache.path).await? {
+            error!("failed to initialize cache: path already exists");
             return Err(eyre!(
                 "file or directory {} already exists",
                 cache.path.display()
@@ -49,7 +50,10 @@ impl Cache {
     pub async fn load<P: Into<PathBuf>>(path: P) -> eyre::Result<Self> {
         let mut cache = Self::new(path);
 
+        info!("load cache from {}", &cache.path.display());
+
         if !fs::try_exists(&cache.path).await? {
+            error!("failed to load cache: path does not exist");
             return Err(eyre!("cache {} does not exist", cache.path.display()));
         }
 
@@ -69,6 +73,7 @@ impl Cache {
     }
 
     pub async fn save(&mut self) -> eyre::Result<()> {
+        info!("save cache");
         self.write_metadata().await?;
 
         Ok(())
@@ -78,6 +83,7 @@ impl Cache {
         let path = self.tmp_filename(None);
 
         fs::create_dir_all(&path).await?;
+        info!("created tmp dir {}", &path.display());
 
         Ok(path)
     }
@@ -104,6 +110,11 @@ impl Cache {
 
         let cache_path = self.path.join("data").join(&hash);
         if cache_path.is_dir() {
+            info!(
+                "version {} already seems to be interned {}",
+                version,
+                cache_path.display()
+            );
             return Ok(());
         }
 
@@ -112,6 +123,10 @@ impl Cache {
 
         for existing in self.metadata.stored_versions.iter_mut() {
             if existing.version == version {
+                info!(
+                    "remove `Current` tag from {} ({})",
+                    existing.version, existing.hash
+                );
                 existing.tags.remove(&StoredVersionTag::Current);
             }
         }

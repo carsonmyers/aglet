@@ -3,17 +3,20 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
-use super::UnicodeVersion;
-use crate::unicode::SelectVersion;
+use crate::cache::{DRAFT_VERSION_TTL, FORMER_VERSION_TTL, LATEST_VERSION_TTL};
+use crate::unicode::{SelectVersion, UnicodeVersion};
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct StoredVersion {
-    pub version: UnicodeVersion,
-    pub hash: String,
-    pub tags: HashSet<StoredVersionTag>,
     #[serde(with = "toml_datetime_compat")]
     pub fetched_at: DateTime<Utc>,
+    #[serde(with = "toml_datetime_compat")]
+    pub expires_at: DateTime<Utc>,
+    pub version:    UnicodeVersion,
+    pub hash:       String,
+    pub tags:       HashSet<StoredVersionTag>,
 }
 
 impl StoredVersion {
@@ -22,6 +25,19 @@ impl StoredVersion {
         hash: String,
         tag: Option<StoredVersionTag>,
     ) -> Self {
+        let fetched_at = Utc::now();
+        let expires_at = fetched_at
+            + match tag {
+                Some(StoredVersionTag::Latest) => LATEST_VERSION_TTL,
+                Some(StoredVersionTag::Draft) => DRAFT_VERSION_TTL,
+                _ => FORMER_VERSION_TTL,
+            };
+
+        info!(
+            "new stored version for {} (fetched: {}, expires: {})",
+            version, fetched_at, expires_at
+        );
+
         let mut tags = HashSet::new();
         tags.insert(StoredVersionTag::Current);
         if let Some(tag) = tag {
@@ -29,11 +45,24 @@ impl StoredVersion {
         }
 
         Self {
+            fetched_at,
+            expires_at,
             version,
             hash,
             tags,
-            fetched_at: Utc::now(),
         }
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.tags.contains(&StoredVersionTag::Current)
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.expires_at <= Utc::now()
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.expires_at > Utc::now()
     }
 }
 

@@ -25,18 +25,6 @@ impl Entry {
         ))(input)
     }
 
-    pub fn is_file(&self) -> bool {
-        matches!(self, Entry::File(_))
-    }
-
-    pub fn is_directory(&self) -> bool {
-        matches!(self, Entry::Directory(_))
-    }
-
-    pub fn is_link(&self) -> bool {
-        matches!(self, Entry::Link(_))
-    }
-
     pub fn file(self) -> Option<File> {
         match self {
             Entry::File(file) => Some(file),
@@ -63,20 +51,6 @@ impl Entry {
             Entry::File(file) => file.name.as_str(),
             Entry::Directory(dir) => dir.name.as_str(),
             Entry::Link(link) => link.name.as_str(),
-        }
-    }
-
-    pub fn size(&self) -> Option<usize> {
-        match self {
-            Entry::File(file) => Some(file.size),
-            _ => None,
-        }
-    }
-
-    pub fn link_target(&self) -> Option<&str> {
-        match self {
-            Entry::Link(link) => Some(link.target.as_str()),
-            _ => None,
         }
     }
 }
@@ -106,8 +80,7 @@ impl File {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::combinator::map;
         use nom::sequence::{preceded, tuple};
-        use parse::non_space;
-        use parse::skip_space;
+        use parse::{non_space, skip_space};
 
         map(
             tuple((
@@ -128,8 +101,7 @@ impl Directory {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::combinator::map;
         use nom::sequence::preceded;
-        use parse::non_space;
-        use parse::skip_space;
+        use parse::{non_space, skip_space};
 
         map(
             preceded(
@@ -143,7 +115,7 @@ impl Directory {
 
 #[derive(Debug, Clone)]
 pub struct Link {
-    pub name: String,
+    pub name:   String,
     pub target: String,
 }
 
@@ -152,8 +124,7 @@ impl Link {
         use nom::bytes::complete::tag;
         use nom::combinator::map;
         use nom::sequence::{preceded, separated_pair};
-        use parse::non_space;
-        use parse::skip_space;
+        use parse::{non_space, skip_space};
 
         map(
             preceded(
@@ -177,10 +148,7 @@ pub fn parse_common(input: &str) -> parse::Result<usize> {
     use nom::character::complete::digit1;
     use nom::combinator::map_res;
     use nom::sequence::{delimited, tuple};
-    use parse::find_digit;
-    use parse::month;
-    use parse::skip_space;
-    use parse::time;
+    use parse::{find_digit, month, skip_space, time};
 
     delimited(
         tuple((find_digit, digit1, find_digit)),

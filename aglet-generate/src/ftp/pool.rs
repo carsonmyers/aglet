@@ -1,13 +1,12 @@
 use async_ftp::FtpStream;
 use deadpool::managed;
 use deadpool::managed::{Metrics, RecycleError, RecycleResult};
-
-use super::ftp::login;
+use eyre::WrapErr;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Connection error: {0}")]
-    ConnectionError(eyre::Report),
+    ConnectionError(#[from] eyre::Report),
 }
 
 pub struct Manager;
@@ -17,7 +16,15 @@ impl managed::Manager for Manager {
     type Error = Error;
 
     async fn create(&self) -> Result<Self::Type, Self::Error> {
-        login().await.map_err(Error::ConnectionError)
+        let mut ftp = FtpStream::connect("www.unicode.org:21")
+            .await
+            .wrap_err("error connecting to unicode.org")?;
+
+        ftp.login("anonymous", "anonymous@anonymous.com")
+            .await
+            .wrap_err("error authenticating with unicode.org")?;
+
+        Ok(ftp)
     }
 
     async fn recycle(

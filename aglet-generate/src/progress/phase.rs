@@ -41,7 +41,3 @@ impl Phase for SimplePhase {
 pub fn phase<S: Into<String>>(msg: S) -> Box<dyn Phase> {
     Box::new(SimplePhase::new(msg.into(), None))
 }
-
-pub fn phase2<S: Into<String>>(msg: S, finish: S) -> Box<dyn Phase> {
-    Box::new(SimplePhase::new(msg.into(), Some(finish.into())))
-}

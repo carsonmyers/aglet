@@ -5,7 +5,7 @@ pub type Result<'a, T> = IResult<&'a str, T>;
 pub fn find_digit(input: &str) -> Result<&str> {
     use nom::bytes::complete::take_till;
 
-    take_till(|c: char| c.is_digit(10))(input)
+    take_till(|c: char| c.is_ascii_digit())(input)
 }
 
 pub fn skip_space(input: &str) -> Result<&str> {
@@ -33,6 +33,7 @@ pub fn identifier(input: &str) -> Result<&str> {
         many0_count(alt((alphanumeric1, tag("_")))),
     ))(input)
 }
+
 pub fn comment(input: &str) -> Result<&str> {
     use nom::bytes::complete::tag;
     use nom::combinator::rest;

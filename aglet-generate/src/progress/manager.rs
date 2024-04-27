@@ -3,13 +3,15 @@ use console::style;
 use indicatif::{MultiProgress, ProgressBar};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
 
 use crate::progress::phase::{phase, Phase};
 
 pub struct Manager {
     start_time: DateTime<Utc>,
-    tx: UnboundedSender<Message>,
+    tx:         UnboundedSender<Message>,
+    handle:     Option<JoinHandle<()>>,
 }
 
 impl Manager {
@@ -17,9 +19,13 @@ impl Manager {
         let start_time = Utc::now();
 
         let (tx, rx) = mpsc::unbounded_channel::<Message>();
-        tokio::spawn(run_progress(rx));
+        let handle = Some(tokio::spawn(run_progress(rx)));
 
-        Self { start_time, tx }
+        Self {
+            start_time,
+            tx,
+            handle,
+        }
     }
 
     pub fn phase(&self, phase: Box<dyn Phase>) -> eyre::Result<()> {
@@ -27,15 +33,30 @@ impl Manager {
         Ok(())
     }
 
-    pub fn finish(&self) -> eyre::Result<()> {
-        let end_time = Utc::now();
-        self.tx.send(Message::Finish(end_time - self.start_time))?;
-
+    pub fn pause(&self) -> eyre::Result<()> {
+        self.tx.send(Message::Pause)?;
         Ok(())
     }
 
-    pub fn shutdown(&self) -> eyre::Result<()> {
+    pub async fn finish(mut self) -> eyre::Result<()> {
+        let Some(handle) = self.handle.take() else {
+            return Ok(());
+        };
+
+        let end_time = Utc::now();
+        self.tx.send(Message::Finish(end_time - self.start_time))?;
+
+        handle.await?;
+        Ok(())
+    }
+
+    pub fn shutdown(&mut self) -> eyre::Result<()> {
+        let Some(_) = self.handle.take() else {
+            return Ok(());
+        };
+
         self.tx.send(Message::Shutdown)?;
+
         Ok(())
     }
 }
@@ -50,6 +71,7 @@ impl Drop for Manager {
 
 enum Message {
     NewPhase(Box<dyn Phase>),
+    Pause,
     Finish(chrono::Duration),
     Shutdown,
 }
@@ -63,7 +85,11 @@ async fn run_progress(mut rx: UnboundedReceiver<Message>) {
         tokio::select! {
             Some(message) = rx.recv() => match message {
                 Message::NewPhase(phase) => state.next_phase(phase),
-                Message::Finish(duration) => state.finish(duration),
+                Message::Pause => state.pause(),
+                Message::Finish(duration) => {
+                    state.finish(duration);
+                    break;
+                },
                 Message::Shutdown => break,
             },
             _ = sleep(Duration::from_millis(100)) => continue,
@@ -76,42 +102,62 @@ async fn run_progress(mut rx: UnboundedReceiver<Message>) {
 }
 
 struct ProgressState {
-    phase: Box<dyn Phase>,
-    bars: Vec<ProgressBar>,
+    phase: Option<Box<dyn Phase>>,
+    bars:  Vec<ProgressBar>,
     group: MultiProgress,
 }
 
 impl ProgressState {
     fn new() -> Self {
         Self {
-            phase: phase("Initializing..."),
-            bars: Vec::new(),
+            phase: None,
+            bars:  Vec::new(),
             group: MultiProgress::new(),
         }
     }
 
+    fn finish_phase(&mut self) {
+        let Some(phase) = &self.phase else {
+            return;
+        };
+
+        let Some(msg) = phase.finish() else {
+            return;
+        };
+
+        eprintln!("\u{2713} {}", style(msg).bright().green());
+    }
+
     fn next_phase(&mut self, phase: Box<dyn Phase>) {
         self.clear();
-
-        if let Some(msg) = self.phase.finish() {
-            eprintln!("\u{2713} {}", style(msg).bright().green());
-        };
+        self.finish_phase();
 
         for bar in phase.init() {
             self.bars.push(self.group.add(bar));
         }
 
-        self.phase = phase;
+        self.phase = Some(phase);
+    }
+
+    fn pause(&mut self) {
+        self.clear();
+        self.finish_phase();
+
+        self.phase = None;
     }
 
     fn update(&mut self) {
-        self.phase.tick();
+        let Some(ref mut phase) = &mut self.phase else {
+            return;
+        };
+
+        phase.tick();
         for (i, bar) in self.bars.iter().enumerate() {
-            if let Some(msg) = self.phase.update_msg(i) {
+            if let Some(msg) = phase.update_msg(i) {
                 bar.set_message(msg);
             }
 
-            if let Some(percent) = self.phase.update_percent(i) {
+            if let Some(percent) = phase.update_percent(i) {
                 bar.set_position(percent.0);
                 bar.set_length(percent.1);
             }
@@ -122,10 +168,11 @@ impl ProgressState {
 
     fn finish(&mut self, duration: chrono::Duration) {
         self.clear();
+        self.finish_phase();
 
-        if let Some(msg) = self.phase.finish() {
-            eprintln!("\u{2713} {}", style(msg).bright().green());
-        };
+        if duration.num_seconds() < 5 {
+            return;
+        }
 
         let formatted = [
             duration.num_hours(),

@@ -1,12 +1,11 @@
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use indicatif::ProgressBar;
 
+use crate::cache::HashFiles;
 use crate::progress;
 use crate::progress::data::PercentComplete;
 use crate::progress::stats::ImmediateStats;
-use crate::unicode::cache::HashFiles;
 
 pub struct HashPhase {
     stats: Arc<ImmediateStats>,

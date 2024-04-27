@@ -50,14 +50,6 @@ impl<T> CachedValue<T> {
     pub fn is_valid(&self) -> bool {
         matches!(self, Self::Cached(data) if data.expires_at > Utc::now())
     }
-
-    pub fn is_expired(&self) -> bool {
-        matches!(self, Self::Cached(data) if data.expires_at <= Utc::now())
-    }
-
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
 }
 
 impl<T> Default for CachedValue<T> {
