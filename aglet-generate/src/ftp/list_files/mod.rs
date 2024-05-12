@@ -1,5 +1,3 @@
-// TODO: remove this pub
-pub mod entry;
 mod list_files;
 mod options;
 mod progress;

@@ -2,18 +2,18 @@ use std::env::current_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_ftp::{DataStream, FtpError, FtpStream};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::task::JoinSet;
-
 use crate::ftp::download::DownloadOptions;
 use crate::ftp::{new_pool, Pool, RecursiveFiles};
 use crate::progress::stats::{ImmediateFileStats, ImmediateStats, StatsSlots};
+use async_ftp::{DataStream, FtpError, FtpStream};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::task::JoinSet;
+use tracing::debug;
 
 pub struct Download {
     files: RecursiveFiles,
     local: Option<PathBuf>,
-    pool:  Arc<Pool>,
+    pool: Arc<Pool>,
     stats: Arc<ImmediateStats>,
     slots: Arc<StatsSlots<ImmediateFileStats>>,
 }
@@ -50,9 +50,15 @@ impl Download {
         };
 
         for file in self.files {
-            let parent = local.join(file.relative_parent());
-            let local = local.join(file.relative_path());
-            let file = file.take();
+            let parent = local.join(file.relative_parent_segments().join("/"));
+            let local = local.join(file.relative_segments().join("/"));
+            let remote = file.path.join("/");
+
+            debug!(
+                "file: parent={} local={}",
+                parent.display(),
+                local.display()
+            );
 
             let pool = self.pool.clone();
             let stats = self.stats.clone();
@@ -64,11 +70,11 @@ impl Download {
                 let mut ftp = pool.get().await?;
 
                 let (file_stats, slot) = slots
-                    .insert(ImmediateFileStats::new(&file.path, file.size))
+                    .insert(ImmediateFileStats::new(&remote, file.size))
                     .await?;
 
                 // download the file and release the slot regardless of whether the download succeeded
-                let dl_res = download_file(stats, file_stats, &mut ftp, &file.path, &local).await;
+                let dl_res = download_file(stats, file_stats, &mut ftp, &remote, &local).await;
                 let rl_res = slots.release(slot).await;
 
                 // preferentially return the download error

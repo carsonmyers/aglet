@@ -74,7 +74,7 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
 
         eprintln!("{}", style(text).black().bright());
     } else {
-        let local_versions = cache.metadata.versions().len();
+        let local_versions = cache.versions().len();
         let local_copies = cache.metadata.stored_versions.len();
         let local_line = format!(
             "{} valid UCD versions in cache ({} copies in total)",
@@ -93,7 +93,7 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
         );
     }
 
-    let current_version = cache.metadata.current_version().or_else(|err| {
+    let current_version = cache.default_version().or_else(|err| {
         let text = format!("error reading current version: {}", err);
         eprintln!("{}", style(text).yellow());
 

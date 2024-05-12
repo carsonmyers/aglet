@@ -5,7 +5,7 @@ use crate::cmd::unicode::CommonArgs;
 use crate::unicode::SelectVersion;
 
 pub async fn run(_args: CommonArgs, cache: &mut Cache) -> eyre::Result<()> {
-    let Ok(Some(current_version)) = cache.metadata.current_version() else {
+    let Ok(Some(current_version)) = cache.default_version() else {
         return print_no_current_version(cache);
     };
 

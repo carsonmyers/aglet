@@ -33,13 +33,15 @@ pub async fn run(args: FetchArgs, cache: &mut Cache) -> eyre::Result<()> {
 }
 
 async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::Result<()> {
-    if let SelectVersion::Hash(_) = args.common.version {
+    if let Some(SelectVersion::Hash(_)) = args.common.version {
         let text = format!(
             "Cannot fetch remote UCD version by hash: use a version like `Latest` or `15` instead"
         );
         eprintln!("{}", style(text).bright().red());
         return Ok(());
     }
+
+    let select = args.common.version.unwrap_or(SelectVersion::Latest);
 
     let pool = Arc::new(new_pool(args.common.max_connections));
     let progress = progress::Manager::new();
@@ -57,8 +59,8 @@ async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::
 
     let version = remote_listing
         .into_iter()
-        .find(|&version| version.selected_by(&args.common.version))
-        .ok_or_else(|| eyre!("no version found matching {}", args.common.version))?
+        .find(|&version| version.selected_by(&select))
+        .ok_or_else(|| eyre!("no version found matching {}", select))?
         .version;
 
     // get a listing of remote files to be downloaded for the selected version
@@ -85,13 +87,13 @@ async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::
     progress.phase(ftp::DownloadProgress::new_phase(&download))?;
     let files = download.download().await?;
 
-    // generate a hash of the downloaded files, so that it can be interned into the cache
+    // ucd a hash of the downloaded files, so that it can be interned into the cache
     let hash = HashFiles::new(&local, files)?;
     progress.phase(HashPhase::phase(&hash))?;
     let hash = hash.hash_files().await?;
 
     // cache the downloaded files
-    let tag = StoredVersionTag::try_from(args.common.version).ok();
+    let tag = StoredVersionTag::try_from(select).ok();
     progress.phase(phase("Intern downloaded files..."))?;
     cache
         .intern_version(&local, version, hash.clone(), tag)

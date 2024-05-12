@@ -7,7 +7,7 @@ use tokio::fs;
 use tracing::{error, info};
 
 use crate::cache::{Metadata, StoredVersion, StoredVersionTag};
-use crate::unicode::UnicodeVersion;
+use crate::unicode::{SelectVersion, UnicodeVersion};
 
 pub const LATEST_VERSION_TTL: Duration = Duration::weeks(6);
 pub const DRAFT_VERSION_TTL: Duration = Duration::weeks(1);
@@ -97,6 +97,72 @@ impl Cache {
         );
 
         self.path.join(filename)
+    }
+
+    pub fn versions(&self) -> Vec<UnicodeVersion> {
+        self.metadata
+            .stored_versions
+            .iter()
+            .filter(|v| v.is_current() && v.is_valid())
+            .map(|v| v.version)
+            .collect()
+    }
+
+    pub fn version_or_default(
+        &self,
+        select: &Option<SelectVersion>,
+    ) -> eyre::Result<Option<&StoredVersion>> {
+        let Some(select) = select else {
+            return self.default_version();
+        };
+
+        let target_version = self.version(select)?;
+
+        Ok(Some(target_version))
+    }
+
+    pub fn version(&self, select: &SelectVersion) -> eyre::Result<&StoredVersion> {
+        let mut candidate_versions = self
+            .metadata
+            .stored_versions
+            .iter()
+            .filter(|version| version.selected_by(select))
+            .collect::<Vec<_>>();
+
+        let target_version = candidate_versions.pop();
+        let Some(target_version) = target_version else {
+            return Err(eyre!("no stored version matching {}", select));
+        };
+
+        Ok(target_version)
+    }
+
+    pub fn default_version(&self) -> eyre::Result<Option<&StoredVersion>> {
+        let Some(select) = self.metadata.use_version.as_ref() else {
+            let target_version =
+                self.metadata.stored_versions.iter().rev().find(|version| {
+                    version.is_valid() && version.is_current() && !version.is_draft()
+                });
+            return Ok(target_version);
+        };
+
+        let target_version = self.version(select)?;
+
+        Ok(Some(target_version))
+    }
+
+    pub fn version_path(&self, version: &StoredVersion) -> eyre::Result<PathBuf> {
+        let path = self.path.join("data").join(&version.hash);
+        if !path.is_dir() {
+            return Err(eyre!(
+                "data for stored version {} ({}) does not exist in cache ({})",
+                version.version,
+                &version.hash[..7],
+                path.display()
+            ));
+        }
+
+        Ok(path)
     }
 
     pub async fn intern_version<P: AsRef<Path>>(

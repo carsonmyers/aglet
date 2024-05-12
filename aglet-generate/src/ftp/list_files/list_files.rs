@@ -6,26 +6,31 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::ftp::list_files::{entry, ListOptions};
-use crate::ftp::{new_pool, Pool, RecursiveFiles, RemoteFile};
+use crate::ftp::list_files::ListOptions;
+use crate::ftp::{listing, new_pool, Pool, RecursiveFiles, RemoteFile};
 use crate::progress::stats::ImmediateStats;
 use crate::task::TaskCounter;
 
 pub struct ListFiles {
     options: Arc<ListOptions>,
-    remote:  Arc<String>,
-    pool:    Arc<Pool>,
-    stats:   Arc<ImmediateStats>,
+    remote: Arc<Vec<String>>,
+    pool: Arc<Pool>,
+    stats: Arc<ImmediateStats>,
 }
 
 impl ListFiles {
     pub fn new<S: AsRef<str>>(remote: S, options: ListOptions) -> Self {
         let pool = options.get_pool().unwrap_or_else(|| Arc::new(new_pool(1)));
-        let remote = remote.as_ref().trim_end_matches('/').to_string();
+        let remote = remote
+            .as_ref()
+            .trim_end_matches('/')
+            .split('/')
+            .map(String::from)
+            .collect::<Vec<_>>();
 
         Self {
             options: Arc::new(options),
-            remote: Arc::new(remote.into()),
+            remote: Arc::new(remote),
             pool,
             stats: Arc::new(ImmediateStats::new()),
         }
@@ -36,8 +41,8 @@ impl ListFiles {
     }
 
     pub async fn list_files(self) -> eyre::Result<RecursiveFiles> {
-        let (tx_dirs, mut rx_dirs) = mpsc::channel::<String>(1024);
-        tx_dirs.send(self.remote.to_string()).await?;
+        let (tx_dirs, mut rx_dirs) = mpsc::channel::<Vec<String>>(1024);
+        tx_dirs.send(self.remote.to_vec()).await?;
 
         let mut join_set: JoinSet<eyre::Result<Vec<RemoteFile>>> = JoinSet::new();
 
@@ -79,14 +84,15 @@ impl ListFiles {
             join_set.spawn(async move {
                 let _dec_on_drop = task_counter;
                 let mut ftp = pool.get().await?;
-                let (new_files, new_dirs) = get_files_and_dirs(&mut ftp, prefix.as_str()).await?;
+                let remote = prefix.join("/");
+                let (new_files, new_dirs) = get_files_and_dirs(&mut ftp, &remote).await?;
 
                 // send new dirs to the parent task so that it will spawn a new task for each
                 for new_dir in new_dirs {
-                    tx_dirs
-                        .send(format!("{}/{}", prefix, &new_dir.name))
-                        .await
-                        .expect("can send dir");
+                    let mut new_prefix = prefix.clone();
+                    new_prefix.push(new_dir.name);
+
+                    tx_dirs.send(new_prefix).await.expect("can send dir");
                 }
 
                 // filter files with excluded extensions and map them into target files
@@ -96,12 +102,9 @@ impl ListFiles {
                         Some((_, ext)) => !options.ext_excluded(ext),
                         None => true,
                     })
-                    .map(|file| RemoteFile {
-                        path: format!("{}/{}", prefix, &file.name),
-                        size: file.size,
-                    })
+                    .map(|file| RemoteFile::new(&prefix, &file.name, file.size))
                     .inspect(|file| {
-                        info!("add file {}", &file.path);
+                        info!("add file {:?}", &file.path);
                         stats.add_file(file.size)
                     })
                     .collect::<Vec<_>>();
@@ -137,20 +140,20 @@ impl ListFiles {
 async fn get_files_and_dirs(
     ftp: &mut FtpStream,
     remote: &str,
-) -> eyre::Result<(Vec<entry::File>, Vec<entry::Directory>)> {
-    let entries = ftp
-        .list(Some(remote))
-        .await?
+) -> eyre::Result<(Vec<listing::File>, Vec<listing::Directory>)> {
+    let listing = ftp.list(Some(remote)).await?;
+
+    let entries = listing
         .into_iter()
-        .map(|line| entry::Entry::from_str(line.as_str()))
+        .map(|line| listing::Entry::from_str(line.as_str()))
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut files = Vec::new();
     let mut directories = Vec::new();
     for entry in entries {
         match entry {
-            entry::Entry::File(file) => files.push(file),
-            entry::Entry::Directory(directory) => directories.push(directory),
+            listing::Entry::File(file) => files.push(file),
+            listing::Entry::Directory(directory) => directories.push(directory),
             _ => (),
         }
     }

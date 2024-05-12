@@ -17,23 +17,13 @@ pub struct UnicodeArgs {
     command: Commands,
 }
 
-impl UnicodeArgs {
-    pub fn common_args(&self) -> &CommonArgs {
-        match &self.command {
-            Commands::Show(args) => args,
-            Commands::Use(args) => args,
-            Commands::List(args) => &args.common,
-            Commands::Fetch(args) => &args.common,
-            Commands::Generate(args) => &args.common,
-        }
-    }
-}
-
 #[derive(Args, Debug)]
 pub struct CommonArgs {
-    #[arg(value_parser = parse_select_version, default_value = "latest")]
-    version: SelectVersion,
+    /// Select version by tag (e.g. Latest, Draft), version name (e.g. 15.1), or hash
+    #[arg(value_parser = parse_select_version)]
+    version: Option<SelectVersion>,
 
+    /// Max number of FTP connections to use for fetching remote data
     #[arg(long, short = 'C', default_value = "5")]
     pub max_connections: usize,
 }

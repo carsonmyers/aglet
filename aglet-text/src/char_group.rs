@@ -10,7 +10,11 @@
 //! [`CharGroup`]: a modifiable (through addition and subtraction of ranges) vector of `char` ranges
 
 use std::cmp::Ordering;
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::fmt::{Display, Formatter};
+use std::ops::{Add, AddAssign, Deref, Sub, SubAssign};
+use std::slice::Iter;
+
+use crate::error::Error;
 
 #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct CharRange(char, char);
@@ -29,6 +33,67 @@ impl CharRange {
     #[inline]
     pub fn contains(&self, c: &char) -> bool {
         &self.0 <= c && c <= &self.1
+    }
+}
+
+impl Display for CharRange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} .. {}", self.start(), self.end())
+    }
+}
+
+impl From<(char, Option<char>)> for CharRange {
+    fn from(value: (char, Option<char>)) -> Self {
+        match value {
+            (start, Some(end)) => (start, end).into(),
+            (start, None) => start.into(),
+        }
+    }
+}
+
+impl TryFrom<(u32, Option<u32>)> for CharRange {
+    type Error = Error;
+
+    fn try_from(value: (u32, Option<u32>)) -> Result<Self, Self::Error> {
+        match value {
+            (start, Some(end)) => (start, end).try_into(),
+            (start, None) => start.try_into(),
+        }
+    }
+}
+
+impl From<(char, char)> for CharRange {
+    fn from(value: (char, char)) -> Self {
+        Self(value.0, value.1)
+    }
+}
+
+impl TryFrom<(u32, u32)> for CharRange {
+    type Error = Error;
+
+    fn try_from(value: (u32, u32)) -> Result<Self, Self::Error> {
+        let start = char::from_u32(value.0).ok_or(Error::InvalidCodepoint(value.0))?;
+        let end = char::from_u32(value.1).ok_or(Error::InvalidCodepoint(value.1))?;
+
+        Ok(Self(start, end))
+    }
+}
+
+impl From<char> for CharRange {
+    fn from(value: char) -> Self {
+        Self(value, value)
+    }
+}
+
+impl TryFrom<u32> for CharRange {
+    type Error = Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        let Some(c) = char::from_u32(value) else {
+            return Err(Error::InvalidCodepoint(value));
+        };
+
+        Ok(Self(c, c))
     }
 }
 
@@ -108,7 +173,7 @@ impl CharGroup {
     ///
     /// If the range overlaps or is adjacent to a range or ranges already in the group, they will be combined
     /// such that the group is represented by a minimal set of ranges with no overlaps or adjacencies.
-    fn add_range(&mut self, range: CharRange) {
+    pub fn add_range(&mut self, range: CharRange) {
         // get a list of existing ranges which overlap or are adjacent to the range to be added
         let overlap = self.overlap(&range, true);
 
@@ -153,7 +218,7 @@ impl CharGroup {
     ///
     /// If the removed range bisects a range already in the group, it will be split into two new ranges without
     /// the specified characters. If it overlaps several existing ranges, they will be removed or truncated.
-    fn remove_range(&mut self, range: CharRange) {
+    pub fn remove_range(&mut self, range: CharRange) {
         // get a list of overlapping ranges that need to be removed, truncated, or split
         let overlap = self.overlap(&range, false);
 
@@ -193,6 +258,10 @@ impl CharGroup {
     /// Test whether a character is contained in the character group
     pub fn contains(&self, c: char) -> bool {
         self.ranges.iter().any(|range| range.contains(&c))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CharRange> {
+        self.ranges.iter()
     }
 
     /// Find all ranges in the group which overlap a given range.
@@ -294,6 +363,31 @@ impl CharGroup {
 impl AsRef<CharGroupSlice> for CharGroup {
     fn as_ref(&self) -> &CharGroupSlice {
         self.ranges.as_slice()
+    }
+}
+
+impl Deref for CharGroup {
+    type Target = CharGroupSlice;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl Iterator for CharGroup {
+    type Item = CharRange;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ranges.pop()
+    }
+}
+
+impl<'a> IntoIterator for &'a CharGroup {
+    type Item = &'a CharRange;
+    type IntoIter = Iter<'a, CharRange>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ranges.iter()
     }
 }
 
@@ -461,66 +555,66 @@ mod tests {
         let group = char_group!['a'..'d', 'f'..'h', 'j'..'m', 't'..'w'];
 
         struct TestCase {
-            test:             CharRange,
+            test: CharRange,
             include_adjacent: bool,
-            expect:           Vec<(usize, CharRange)>,
+            expect: Vec<(usize, CharRange)>,
         }
 
         // test the result of `overlap()` for a given `test` range on the set of ranges above
         let tests: Vec<TestCase> = vec![
             TestCase {
-                test:             CharRange('g', 'h'),
+                test: CharRange('g', 'h'),
                 include_adjacent: true,
-                expect:           vec![(1, CharRange('f', 'h'))],
+                expect: vec![(1, CharRange('f', 'h'))],
             },
             TestCase {
-                test:             CharRange('f', 'h'),
+                test: CharRange('f', 'h'),
                 include_adjacent: true,
-                expect:           vec![(1, CharRange('f', 'h'))],
+                expect: vec![(1, CharRange('f', 'h'))],
             },
             TestCase {
-                test:             CharRange('d', 'f'),
+                test: CharRange('d', 'f'),
                 include_adjacent: true,
-                expect:           vec![(0, CharRange('a', 'd')), (1, CharRange('f', 'h'))],
+                expect: vec![(0, CharRange('a', 'd')), (1, CharRange('f', 'h'))],
             },
             TestCase {
-                test:             CharRange('c', 'e'),
+                test: CharRange('c', 'e'),
                 include_adjacent: true,
-                expect:           vec![(0, CharRange('a', 'd')), (1, CharRange('f', 'h'))],
+                expect: vec![(0, CharRange('a', 'd')), (1, CharRange('f', 'h'))],
             },
             TestCase {
-                test:             CharRange('c', 'e'),
+                test: CharRange('c', 'e'),
                 include_adjacent: false,
-                expect:           vec![(0, CharRange('a', 'd'))],
+                expect: vec![(0, CharRange('a', 'd'))],
             },
             TestCase {
-                test:             CharRange('g', 'l'),
+                test: CharRange('g', 'l'),
                 include_adjacent: true,
-                expect:           vec![(1, CharRange('f', 'h')), (2, CharRange('j', 'm'))],
+                expect: vec![(1, CharRange('f', 'h')), (2, CharRange('j', 'm'))],
             },
             TestCase {
-                test:             CharRange('o', 'r'),
+                test: CharRange('o', 'r'),
                 include_adjacent: true,
-                expect:           vec![],
+                expect: vec![],
             },
             TestCase {
-                test:             CharRange('i', 's'),
+                test: CharRange('i', 's'),
                 include_adjacent: true,
-                expect:           vec![
+                expect: vec![
                     (1, CharRange('f', 'h')),
                     (2, CharRange('j', 'm')),
                     (3, CharRange('t', 'w')),
                 ],
             },
             TestCase {
-                test:             CharRange('i', 's'),
+                test: CharRange('i', 's'),
                 include_adjacent: false,
-                expect:           vec![(2, CharRange('j', 'm'))],
+                expect: vec![(2, CharRange('j', 'm'))],
             },
             TestCase {
-                test:             CharRange('0', 'z'),
+                test: CharRange('0', 'z'),
                 include_adjacent: true,
-                expect:           vec![
+                expect: vec![
                     (0, CharRange('a', 'd')),
                     (1, CharRange('f', 'h')),
                     (2, CharRange('j', 'm')),
@@ -528,34 +622,34 @@ mod tests {
                 ],
             },
             TestCase {
-                test:             CharRange('0', '9'),
+                test: CharRange('0', '9'),
                 include_adjacent: true,
-                expect:           vec![],
+                expect: vec![],
             },
             TestCase {
-                test:             CharRange('y', 'z'),
+                test: CharRange('y', 'z'),
                 include_adjacent: true,
-                expect:           vec![],
+                expect: vec![],
             },
             TestCase {
-                test:             CharRange('x', 'z'),
+                test: CharRange('x', 'z'),
                 include_adjacent: true,
-                expect:           vec![(3, CharRange('t', 'w'))],
+                expect: vec![(3, CharRange('t', 'w'))],
             },
             TestCase {
-                test:             CharRange('x', 'z'),
+                test: CharRange('x', 'z'),
                 include_adjacent: false,
-                expect:           vec![],
+                expect: vec![],
             },
             TestCase {
-                test:             CharRange(char_sub('a', 4), char_sub('a', 1)),
+                test: CharRange(char_sub('a', 4), char_sub('a', 1)),
                 include_adjacent: true,
-                expect:           vec![(0, CharRange('a', 'd'))],
+                expect: vec![(0, CharRange('a', 'd'))],
             },
             TestCase {
-                test:             CharRange(char_sub('a', 4), char_sub('a', 1)),
+                test: CharRange(char_sub('a', 4), char_sub('a', 1)),
                 include_adjacent: false,
-                expect:           vec![],
+                expect: vec![],
             },
         ];
 
@@ -576,7 +670,7 @@ mod tests {
     #[test]
     fn add_range() {
         struct TestCase {
-            add:    CharRange,
+            add: CharRange,
             expect: Vec<CharRange>,
         }
 
@@ -584,59 +678,59 @@ mod tests {
         // (the first test operates on an empty `CharGroup`, and the second on the result of the first, etc.)
         let tests = vec![
             TestCase {
-                add:    CharRange('j', 'l'),
+                add: CharRange('j', 'l'),
                 expect: ranges!['j'..'l'],
             },
             TestCase {
-                add:    CharRange('h', 'j'),
+                add: CharRange('h', 'j'),
                 expect: ranges!['h'..'l'],
             },
             TestCase {
-                add:    CharRange('l', 'n'),
+                add: CharRange('l', 'n'),
                 expect: ranges!['h'..'n'],
             },
             TestCase {
-                add:    CharRange('p', 'r'),
+                add: CharRange('p', 'r'),
                 expect: ranges!['h'..'n', 'p'..'r'],
             },
             TestCase {
-                add:    CharRange('s', 'u'),
+                add: CharRange('s', 'u'),
                 expect: ranges!['h'..'n', 'p'..'u'],
             },
             TestCase {
-                add:    CharRange('o', 'w'),
+                add: CharRange('o', 'w'),
                 expect: ranges!['h'..'w'],
             },
             TestCase {
-                add:    CharRange('a', 'c'),
+                add: CharRange('a', 'c'),
                 expect: ranges!['a'..'c', 'h'..'w'],
             },
             TestCase {
-                add:    CharRange('e', 'f'),
+                add: CharRange('e', 'f'),
                 expect: ranges!['a'..'c', 'e'..'f', 'h'..'w'],
             },
             TestCase {
-                add:    CharRange('a', 'c'),
+                add: CharRange('a', 'c'),
                 expect: ranges!['a'..'c', 'e'..'f', 'h'..'w'],
             },
             TestCase {
-                add:    CharRange('d', 'd'),
+                add: CharRange('d', 'd'),
                 expect: ranges!['a'..'f', 'h'..'w'],
             },
             TestCase {
-                add:    CharRange('f', 'h'),
+                add: CharRange('f', 'h'),
                 expect: ranges!['a'..'w'],
             },
             TestCase {
-                add:    CharRange('x', 'z'),
+                add: CharRange('x', 'z'),
                 expect: ranges!['a'..'z'],
             },
             TestCase {
-                add:    CharRange('\u{D7FE}', '\u{D7FF}'),
+                add: CharRange('\u{D7FE}', '\u{D7FF}'),
                 expect: ranges!['a'..'z', '\u{D7FE}'..'\u{D7FF}'],
             },
             TestCase {
-                add:    CharRange('\u{E000}', '\u{E001}'),
+                add: CharRange('\u{E000}', '\u{E001}'),
                 expect: ranges!['a'..'z', '\u{D7FE}'..'\u{E001}'],
             },
         ];

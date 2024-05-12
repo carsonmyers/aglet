@@ -3,25 +3,25 @@ use std::collections::VecDeque;
 use std::ops::Deref;
 use std::str::FromStr;
 
-use eyre::eyre;
-
 use crate::parse;
+use eyre::eyre;
+use eyre::WrapErr;
+use nom::Parser;
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct RecursiveFiles {
-    root:  String,
+    root: Vec<String>,
     files: VecDeque<RemoteFile>,
 }
 
 impl RecursiveFiles {
     pub fn new<S, V>(root: S, files: V) -> eyre::Result<Self>
     where
-        S: Into<String>,
+        S: AsRef<Vec<String>>,
         V: IntoIterator<Item = RemoteFile>,
     {
-        // remote files' paths are built from
-        let mut root = root.into();
-        root.push('/');
+        let root = root.as_ref().to_vec();
 
         let files = files
             .into_iter()
@@ -31,8 +31,8 @@ impl RecursiveFiles {
                 } else {
                     Err(eyre!(
                         "remote file {} is not within the specified root {}",
-                        remote_file.path,
-                        &root
+                        remote_file.path.join("/"),
+                        root.join("/")
                     ))
                 }
             })
@@ -40,29 +40,19 @@ impl RecursiveFiles {
 
         Ok(Self { root, files })
     }
-
-    pub fn iter(&self) -> RecursiveFilesRefIter {
-        RecursiveFilesRefIter {
-            listing: self,
-            index:   0,
-        }
-    }
 }
 
 impl Iterator for RecursiveFiles {
     type Item = ListingFile<RemoteFile>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Some(remote_file) = self.files.pop_front() else {
-            return None;
-        };
-
+        let remote_file = self.files.pop_front()?;
         let root_len = self.root.len();
-        let filename_offset = remote_file.path.rfind('/').unwrap_or(0);
+
+        debug!("file: {} {}", remote_file.path.join("/"), root_len);
 
         Some(ListingFile {
             root_len,
-            filename_offset,
             remote_file,
         })
     }
@@ -71,7 +61,7 @@ impl Iterator for RecursiveFiles {
 #[derive(Debug, Clone)]
 pub struct RecursiveFilesRefIter<'a> {
     listing: &'a RecursiveFiles,
-    index:   usize,
+    index: usize,
 }
 
 impl<'a> Iterator for RecursiveFilesRefIter<'a> {
@@ -83,16 +73,11 @@ impl<'a> Iterator for RecursiveFilesRefIter<'a> {
         } else {
             let root_len = self.listing.root.len();
             let remote_file = &self.listing.files[self.index];
-            let filename_offset = remote_file
-                .path
-                .rfind('/')
-                .expect("entry should have a parent");
 
             self.index += 1;
 
             Some(ListingFile {
                 root_len,
-                filename_offset,
                 remote_file,
             })
         }
@@ -101,25 +86,25 @@ impl<'a> Iterator for RecursiveFilesRefIter<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ListingFile<T> {
-    root_len:        usize,
-    filename_offset: usize,
-    remote_file:     T,
+    root_len: usize,
+    remote_file: T,
 }
 
 impl<T: Borrow<RemoteFile>> ListingFile<T> {
-    pub fn relative_path(&self) -> &str {
+    pub fn relative_segments(&self) -> &[String] {
         &self.remote_file.borrow().path[self.root_len..]
     }
 
-    pub fn relative_parent(&self) -> &str {
-        &self.remote_file.borrow().path[self.root_len..self.filename_offset]
+    pub fn relative_parent_segments(&self) -> &[String] {
+        let path = &self.remote_file.borrow().path;
+        &path[self.root_len..path.len() - 1]
     }
 }
 
 impl ListingFile<RemoteFile> {
-    pub fn take(self) -> RemoteFile {
-        self.remote_file
-    }
+    // pub fn take(self) -> RemoteFile {
+    //     self.remote_file
+    // }
 }
 
 impl<T> Deref for ListingFile<T> {
@@ -137,8 +122,21 @@ impl<T> Deref for ListingFile<T> {
 /// location on the server.
 #[derive(Debug, Clone)]
 pub struct RemoteFile {
-    pub path: String,
+    pub path: Vec<String>,
     pub size: usize,
+}
+
+impl RemoteFile {
+    pub fn new<P, Q>(prefix: P, name: Q, size: usize) -> Self
+    where
+        P: AsRef<[String]>,
+        Q: AsRef<str>,
+    {
+        let mut path = prefix.as_ref().to_vec();
+        path.push(name.as_ref().to_string());
+
+        Self { path, size }
+    }
 }
 
 /// An entry in a remote directory listing
@@ -165,7 +163,8 @@ impl Entry {
             preceded(tag("-"), map(File::parse, Entry::File)),
             preceded(tag("d"), map(Directory::parse, Entry::Directory)),
             preceded(tag("l"), map(Link::parse, Entry::Link)),
-        ))(input)
+        ))
+        .parse(input)
     }
 
     pub fn file(self) -> Option<File> {
@@ -202,14 +201,7 @@ impl FromStr for Entry {
     type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use nom::Finish;
-
-        match Self::parse(s).finish() {
-            Ok((_, entry)) => Ok(entry),
-            Err(nom::error::Error { input, code }) => {
-                Err(eyre!("invalid line (...{}): {:?}", input, code))
-            },
-        }
+        parse::finish(Self::parse(s)).wrap_err("failed to parse entry")
     }
 }
 
@@ -222,16 +214,17 @@ pub struct File {
 impl File {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::combinator::map;
-        use nom::sequence::{preceded, tuple};
-        use parse::{non_space, skip_space};
+        use nom::sequence::preceded;
+        use parse::{non_spaces, spaces};
 
         map(
-            tuple((
+            (
                 parse_common,
-                preceded(skip_space, map(non_space, str::to_string)),
-            )),
+                preceded(spaces, map(non_spaces, String::from)),
+            ),
             |(size, name)| Self { name, size },
-        )(input)
+        )
+        .parse(input)
     }
 }
 
@@ -244,65 +237,90 @@ impl Directory {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::combinator::map;
         use nom::sequence::preceded;
-        use parse::{non_space, skip_space};
+        use parse::{non_spaces, spaces};
 
         map(
             preceded(
                 parse_common,
-                preceded(skip_space, map(non_space, str::to_string)),
+                preceded(spaces, map(non_spaces, String::from)),
             ),
             |name| Self { name },
-        )(input)
+        )
+        .parse(input)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Link {
-    pub name:   String,
+    pub name: String,
     pub target: String,
 }
 
 impl Link {
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::bytes::complete::tag;
+        use nom::character::complete::space0;
         use nom::combinator::map;
         use nom::sequence::{preceded, separated_pair};
-        use parse::{non_space, skip_space};
+        use parse::non_spaces;
 
         map(
             preceded(
                 parse_common,
                 preceded(
-                    skip_space,
+                    space0,
                     separated_pair(
-                        map(non_space, str::to_string),
+                        map(non_spaces, str::to_string),
                         tag(" -> "),
-                        map(non_space, str::to_string),
+                        map(non_spaces, str::to_string),
                     ),
                 ),
             ),
             |(name, target)| Self { name, target },
-        )(input)
+        )
+        .parse(input)
     }
 }
 
 pub fn parse_common(input: &str) -> parse::Result<usize> {
     use nom::branch::alt;
-    use nom::character::complete::digit1;
+    use nom::character::complete::{digit1, space0};
     use nom::combinator::map_res;
-    use nom::sequence::{delimited, tuple};
-    use parse::{find_digit, month, skip_space, time};
+    use nom::sequence::delimited;
+    use parse::ftp::{month, time};
+    use parse::non_digits;
 
     delimited(
-        tuple((find_digit, digit1, find_digit)),
+        (non_digits, digit1, non_digits),
         map_res(digit1, str::parse::<usize>),
-        tuple((
-            skip_space,
-            month,
-            skip_space,
-            digit1,
-            skip_space,
-            alt((time, digit1)),
-        )),
-    )(input)
+        (space0, month, space0, digit1, space0, alt((time, digit1))),
+    )
+    .parse(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_directory() {
+        use nom::branch::alt;
+        use nom::character::complete::{digit1, space0};
+        use nom::combinator::map_res;
+        use nom::sequence::delimited;
+        use parse::ftp::{month, time};
+        use parse::non_digits;
+
+        let line = "dr-xr-xr-x   5 ftp      ftp          4096 Jun 19  2017 10.0.0";
+
+        /*
+        delimited(
+            (non_digits, digit1, non_digits),
+            map_res(digit1, str::parse::<usize>),
+            (space0, month, space0, digit1, space0, alt((time, digit1))),
+        );
+         */
+
+        dbg!(Directory::parse(line));
+    }
 }

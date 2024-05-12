@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use eyre::{eyre, Context};
+use eyre::Context;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -9,7 +9,7 @@ use tracing::info;
 use crate::cache::cached_value::CachedValue;
 use crate::cache::stored_version::StoredVersion;
 use crate::ftp::RemoteVersion;
-use crate::unicode::{SelectVersion, UnicodeVersion};
+use crate::unicode::SelectVersion;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Metadata {
@@ -57,45 +57,6 @@ impl Metadata {
         info!("write metadata file {}", path.as_ref().display());
 
         Ok(())
-    }
-
-    pub fn versions(&self) -> Vec<UnicodeVersion> {
-        self.stored_versions
-            .iter()
-            .filter(|v| v.is_current() && v.is_valid())
-            .map(|v| v.version)
-            .collect()
-    }
-
-    pub fn current_version(&self) -> eyre::Result<Option<&StoredVersion>> {
-        let current = self.use_version()?.or_else(|| self.default_version());
-
-        Ok(current)
-    }
-
-    pub fn use_version(&self) -> eyre::Result<Option<&StoredVersion>> {
-        let Some(select) = self.use_version.as_ref() else {
-            return Ok(None);
-        };
-
-        let mut candidate_versions = self
-            .stored_versions
-            .iter()
-            .filter(|version| version.selected_by(select))
-            .collect::<Vec<_>>();
-
-        let Some(version) = candidate_versions.pop() else {
-            return Err(eyre!("no stored version matching {}", select));
-        };
-
-        Ok(Some(version))
-    }
-
-    pub fn default_version(&self) -> Option<&StoredVersion> {
-        self.stored_versions
-            .iter()
-            .rev()
-            .find(|version| version.is_valid() && version.is_current() && !version.is_draft())
     }
 }
 

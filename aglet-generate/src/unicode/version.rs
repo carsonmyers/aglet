@@ -1,11 +1,12 @@
 use std::fmt::{self, Display, Formatter};
+use std::path::PathBuf;
 use std::str::FromStr;
 
-use eyre::{eyre, Error};
-use nom::Finish;
-use serde::{Deserialize, Deserializer, Serialize};
-
 use crate::parse;
+use eyre::{eyre, Error, WrapErr};
+use nom::Parser;
+use serde::{Deserialize, Deserializer, Serialize};
+use tracing::warn;
 
 const MIN_MODERN_VERSION: UnicodeVersion = UnicodeVersion(4, 1, 0);
 
@@ -13,11 +14,15 @@ const MIN_MODERN_VERSION: UnicodeVersion = UnicodeVersion(4, 1, 0);
 pub struct UnicodeVersion(u8, u8, u8);
 
 impl UnicodeVersion {
+    pub fn new(maj: u8, min: u8, update: u8) -> Self {
+        Self(maj, min, update)
+    }
+
     pub fn parse(input: &str) -> parse::Result<Self> {
         use nom::branch::alt;
         use nom::combinator::all_consuming;
 
-        all_consuming(alt((Self::parse_update_version, Self::parse_version)))(input)
+        all_consuming(alt((Self::parse_update_version, Self::parse_version))).parse(input)
     }
 
     pub fn parse_update_version(input: &str) -> parse::Result<Self> {
@@ -36,7 +41,8 @@ impl UnicodeVersion {
                 preceded(tag("-UPDATE"), opt(map_res(digit1, str::parse))),
             ),
             |((x, y), z)| Self(x, y, z.unwrap_or_default()),
-        )(input)
+        )
+        .parse(input)
     }
 
     pub fn parse_version(input: &str) -> parse::Result<Self> {
@@ -46,13 +52,14 @@ impl UnicodeVersion {
         use nom::sequence::{preceded, tuple};
 
         map(
-            tuple((
+            (
                 map_res(digit1, str::parse),
                 opt(preceded(tag("."), map_res(digit1, str::parse))),
                 opt(preceded(tag("."), map_res(digit1, str::parse))),
-            )),
+            ),
             |(x, y, z)| Self(x, y.unwrap_or_default(), z.unwrap_or_default()),
-        )(input)
+        )
+        .parse(input)
     }
 
     pub fn remote_dir(&self) -> String {
@@ -66,6 +73,15 @@ impl UnicodeVersion {
             Self(x, y, z) => {
                 format!("Public/{}.{}.{}", x, y, z)
             },
+        }
+    }
+
+    pub fn filename<S: AsRef<str>>(&self, name: S) -> PathBuf {
+        match self {
+            Self(maj, min, update) if self < &MIN_MODERN_VERSION => {
+                PathBuf::from(format!("{}-{}.{}.{}.txt", name.as_ref(), maj, min, update))
+            },
+            _ => PathBuf::from("ucd").join(format!("{}.txt", name.as_ref())),
         }
     }
 
@@ -84,25 +100,18 @@ impl FromStr for UnicodeVersion {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use nom::Finish;
-
-        match Self::parse(s).finish() {
-            Ok((_, version)) => Ok(version),
-            Err(nom::error::Error { input, code }) => {
-                Err(eyre!("invalid version {} (...{}): {:?}", s, input, code))
-            },
-        }
+        parse::finish(Self::parse(s)).wrap_err("invalid unicode version")
     }
 }
 
-impl std::fmt::Debug for UnicodeVersion {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for UnicodeVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}.{}", self.0, self.1, self.2)
     }
 }
 
 impl Display for UnicodeVersion {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}.{}", self.0, self.1, self.2)
     }
 }
@@ -121,7 +130,7 @@ struct UnicodeVersionVisitor;
 impl<'de> serde::de::Visitor<'de> for UnicodeVersionVisitor {
     type Value = UnicodeVersion;
 
-    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
         formatter.write_str("a unicode version like 15.1.0")
     }
 
@@ -156,33 +165,19 @@ impl SelectVersion {
     }
 
     pub fn try_hash_from_str(value: &str) -> eyre::Result<Self> {
-        use nom::combinator::all_consuming;
-        use nom::Finish;
-        use parse::hash_str;
+        use nom::combinator::{all_consuming, map};
+        use parse::hex_digits;
 
-        let mut parser = all_consuming(hash_str);
-        match parser(value).finish() {
-            Ok((_, hash)) => Ok(Self::Hash(String::from(hash))),
-            Err(nom::error::Error { input, code }) => {
-                Err(eyre!("invalid hash {} (...{}): {:?}", value, input, code))
-            },
-        }
+        let mut parser = map(all_consuming(hex_digits), Self::hash_from_str);
+        parse::finish(parser.parse(value)).wrap_err("invalid version hash")
     }
 
-    pub fn is_latest(&self) -> bool {
-        matches!(self, SelectVersion::Latest)
-    }
-
-    pub fn is_draft(&self) -> bool {
-        matches!(self, SelectVersion::Draft)
+    fn hash_from_str(hash: &str) -> Self {
+        Self::Hash(String::from(hash))
     }
 
     pub fn is_version(&self) -> bool {
         matches!(self, SelectVersion::Version(_))
-    }
-
-    pub fn is_hash(&self) -> bool {
-        matches!(self, SelectVersion::Hash(_))
     }
 }
 
@@ -219,3 +214,65 @@ impl FromStr for SelectVersion {
         }
     }
 }
+
+pub trait VersionConstructor {
+    fn version(maj: u8, min: u8, update: u8) -> Self;
+}
+
+impl VersionConstructor for UnicodeVersion {
+    fn version(maj: u8, min: u8, update: u8) -> Self {
+        UnicodeVersion(maj, min, update)
+    }
+}
+
+impl VersionConstructor for SelectVersion {
+    fn version(maj: u8, min: u8, update: u8) -> Self {
+        SelectVersion::Version(UnicodeVersion(maj, min, update))
+    }
+}
+//
+// impl VersionConstructor for &UnicodeVersion {
+//     fn version(maj: u8, min: u8, update: u8) -> Self {
+//         &UnicodeVersion(maj, min, update)
+//     }
+// }
+
+pub fn construct_version<T: VersionConstructor>(maj: u8, min: u8, update: u8) -> T {
+    T::version(maj, min, update)
+}
+
+#[macro_export]
+macro_rules! ver {
+    ($maj:literal , $min:literal , $update:literal) => {
+        &$crate::unicode::version::construct_version($maj, $min, $update)
+    };
+    ($maj:literal , $min:literal) => {
+        ver!($maj, $min, 0)
+    };
+    ($maj:literal) => {
+        ver!($maj, 0, 0)
+    };
+    (LATEST) => {
+        $crate::unicode::version::SelectVersion::Latest
+    };
+    (latest) => {
+        ver!(LATEST)
+    };
+    (Latest) => {
+        ver!(LATEST)
+    };
+    (DRAFT) => {
+        $crate::unicode::version::SelectVersion::Draft
+    };
+    (draft) => {
+        ver!(DRAFT)
+    };
+    (Draft) => {
+        ver!(DRAFT)
+    };
+    () => {
+        ver!(0, 0, 0)
+    };
+}
+
+pub use ver;

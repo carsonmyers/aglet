@@ -41,7 +41,7 @@ pub struct RegexArgs {
     #[arg(long)]
     force_color: bool,
 
-    /// Use test mode - generate test output or test input data.
+    /// Use test mode - ucd test output or test input data.
     ///
     /// Implies --no_color, --no_align, --ast, and --tokens
     #[arg(short = 'T', long)]
@@ -157,7 +157,7 @@ fn print_ast(section: &InputSection, printer_settings: PrettyPrintSettings) -> R
 
 struct InputSection {
     source: SourceFile,
-    tests:  Vec<TestKind>,
+    tests: Vec<TestKind>,
 }
 
 enum TestKind {
@@ -166,9 +166,9 @@ enum TestKind {
 }
 
 struct SectionIterator {
-    input:        CliInput,
+    input: CliInput,
     last_section: Option<InputSection>,
-    allow_tests:  bool,
+    allow_tests: bool,
 }
 
 impl SectionIterator {
@@ -230,7 +230,7 @@ impl SectionIterator {
     fn start_section(&mut self, input: String) -> Option<InputSection> {
         self.last_section.replace(InputSection {
             source: SourceFile::new_from_source("".to_string(), "<stdin>".to_string(), input),
-            tests:  Vec::new(),
+            tests: Vec::new(),
         })
     }
 }

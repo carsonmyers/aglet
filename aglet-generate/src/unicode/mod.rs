@@ -1,4 +1,4 @@
-pub mod generate;
+pub mod ucd;
 mod version;
 
 pub use version::*;
