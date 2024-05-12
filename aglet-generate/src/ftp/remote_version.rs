@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::unicode::UnicodeVersion;
+use crate::unicode::{SelectVersion, UnicodeVersion};
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct RemoteVersion {
@@ -23,6 +23,23 @@ impl RemoteVersion {
         };
 
         Self { version, tag }
+    }
+
+    pub fn is_latest(&self) -> bool {
+        matches!(self.tag, Some(RemoteVersionTag::Latest))
+    }
+
+    pub fn is_draft(&self) -> bool {
+        matches!(self.tag, Some(RemoteVersionTag::Draft))
+    }
+
+    pub fn selected_by(&self, select: &SelectVersion) -> bool {
+        match select {
+            SelectVersion::Latest => self.is_latest(),
+            SelectVersion::Draft => self.is_draft(),
+            SelectVersion::Version(version) => &self.version == version,
+            SelectVersion::Hash(_) => false,
+        }
     }
 }
 

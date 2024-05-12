@@ -18,7 +18,7 @@ pub enum CachedValue<T> {
 pub struct CachedData<T> {
     #[serde(with = "toml_datetime_compat")]
     pub expires_at: DateTime<Utc>,
-    pub value: T,
+    pub value:      T,
 }
 
 impl<T> CachedValue<T> {
@@ -32,7 +32,7 @@ impl<T> CachedValue<T> {
     {
         if !self.is_valid() {
             *self = Self::Cached(CachedData {
-                value: replacer.await?,
+                value:      replacer.await?,
                 expires_at: Utc::now() + ttl,
             });
         }

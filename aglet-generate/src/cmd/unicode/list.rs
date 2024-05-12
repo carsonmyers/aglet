@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{Duration, Local};
 use clap::Args;
 use console::style;
 use itertools::Itertools;
 
-use crate::cache::{Cache, StoredVersion, StoredVersionTag};
+use crate::cache::{Cache, StoredVersion, REMOTE_LISTING_TTL};
 use crate::cmd::unicode::CommonArgs;
 use crate::ftp::{self, new_pool, RemoteVersion, RemoteVersionTag};
 use crate::progress;
@@ -37,7 +36,7 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
         let remote_listing = cache
             .metadata
             .remote_listing
-            .get_or_replace(Duration::days(15), list_versions.list_versions())
+            .get_or_replace(REMOTE_LISTING_TTL, list_versions.list_versions())
             .await?;
 
         for &version in remote_listing {
@@ -49,6 +48,8 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
 
         progress.finish().await?;
     }
+
+    let remote_copies = version_map.len();
 
     for version in &cache.metadata.stored_versions {
         let listing = version_map
@@ -75,12 +76,29 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
     } else {
         let local_versions = cache.metadata.versions().len();
         let local_copies = cache.metadata.stored_versions.len();
-        let text = format!("{} UCD versions cached locally ({} copies in total)\n{} versions listed from unicode.org", local_versions, local_copies, version_map.len());
+        let local_line = format!(
+            "{} valid UCD versions in cache ({} copies in total)",
+            local_versions, local_copies,
+        );
+        let remote_line = if remote_copies > 0 {
+            format!("\n{} versions listed from unicode.org", remote_copies)
+        } else {
+            String::new()
+        };
 
-        eprintln!("{}", style(text).black().bright());
+        eprintln!(
+            "{}{}",
+            style(local_line).white(),
+            style(remote_line).bright().black()
+        );
     }
 
-    eprintln!();
+    let current_version = cache.metadata.current_version().or_else(|err| {
+        let text = format!("error reading current version: {}", err);
+        eprintln!("{}", style(text).yellow());
+
+        <Result<_, eyre::Report>>::Ok(None)
+    })?;
 
     for version in version_map.keys().sorted() {
         let listing = version_map.get(version).expect("version should be present");
@@ -94,70 +112,25 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
             let version_str = style(version_str).bright().black();
             println!("  {}", version_str);
         } else {
-            let version_str = if listing.cached.iter().any(|v| !v.is_expired()) {
-                style(version_str).bright().green()
-            } else {
-                style(version_str).red()
+            let current_indicator = match current_version {
+                Some(current) if version == &current.version => "*",
+                _ => " ",
             };
 
-            println!("  {}", version_str);
+            let version_line = style(format!("{} {}", current_indicator, version_str));
+            if listing.cached.iter().any(|v| !v.is_expired()) {
+                println!("{}", version_line.bright().green());
+            } else {
+                println!("{}", version_line.red());
+            }
 
             for cached_version in &listing.cached {
-                let fetched_at = cached_version.fetched_at.with_timezone(&Local);
-                let mut tags = Vec::new();
-                if cached_version.tags.contains(&StoredVersionTag::Latest) {
-                    tags.push("Latest".to_string());
-                }
-                if cached_version.tags.contains(&StoredVersionTag::Draft) {
-                    tags.push("Draft".to_string());
-                }
-                if cached_version.tags.contains(&StoredVersionTag::Current) {
-                    tags.push("Current".to_string());
-                }
-                if cached_version.is_expired() {
-                    tags.push("Expired".to_string());
-                }
-
-                let tags = if tags.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", tags.join(", "))
+                let current_indicator = match current_version {
+                    Some(current) if cached_version.hash == current.hash => "*",
+                    _ => " ",
                 };
 
-                let expires = if cached_version.is_current() {
-                    let expires_at = cached_version.expires_at.with_timezone(&Local);
-                    if cached_version.is_expired() {
-                        format!(", expired {}", expires_at.format("%c"))
-                    } else {
-                        let expires_in = expires_at - Local::now();
-                        let expires_in_str = match (
-                            expires_in.num_weeks(),
-                            expires_in.num_days(),
-                            expires_in.num_hours(),
-                        ) {
-                            (w, _, _) if w > 0 => format!("{} weeks", w),
-                            (0, d, _) if d > 0 => format!("{} days", d),
-                            (0, 0, h) if h > 0 => format!("{} hours", h),
-                            _ => format!(
-                                "{}:{}",
-                                expires_in.num_minutes(),
-                                expires_in.num_seconds() % 60
-                            ),
-                        };
-
-                        format!(", expires in {}", expires_in_str)
-                    }
-                } else {
-                    String::new()
-                };
-
-                let version_line = style(format!(
-                    "   - {} fetched {}{}{}",
-                    &cached_version.hash[..7],
-                    fetched_at.format("%c"),
-                    expires,
-                    tags,
-                ));
+                let version_line = style(format!("{}  {}", current_indicator, cached_version));
 
                 if cached_version.is_expired() && cached_version.is_current() {
                     println!("{}", version_line.bright().red());

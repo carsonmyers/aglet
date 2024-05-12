@@ -1,4 +1,4 @@
-use nom::IResult;
+use nom::{AsChar, IResult};
 
 pub type Result<'a, T> = IResult<&'a str, T>;
 
@@ -18,6 +18,12 @@ pub fn non_space(input: &str) -> Result<&str> {
     use nom::bytes::complete::take_while1;
 
     take_while1(|c: char| !c.is_whitespace())(input)
+}
+
+pub fn hash_str(input: &str) -> Result<&str> {
+    use nom::bytes::complete::take_while1;
+
+    take_while1(|c: char| c.is_hex_digit())(input)
 }
 
 pub fn identifier(input: &str) -> Result<&str> {

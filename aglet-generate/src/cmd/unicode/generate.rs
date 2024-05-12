@@ -19,18 +19,15 @@ pub async fn run(args: GenerateArgs, cache: &mut Cache) -> eyre::Result<()> {
         .metadata
         .stored_versions
         .iter()
-        .find(|stored| match args.common.version {
-            SelectVersion::Version(version) => stored.version == version,
-            SelectVersion::Draft => stored.tags.contains(&StoredVersionTag::Draft),
-            SelectVersion::Latest => stored.tags.contains(&StoredVersionTag::Latest),
-        });
+        .find(|stored| stored.selected_by(&args.common.version));
 
     let Some(version) = version else {
         if cache.metadata.stored_versions.is_empty() {
             return Err(eyre!("no versions of the unicode database have been downloaded; use `ag-gen unicode fetch.rs` to get the latest version"));
         }
 
-        return Err(match args.common.version {
+        return Err(match &args.common.version {
+            SelectVersion::Hash(hash) => eyre!("hash {} does not describe any cached UCD version", &hash),
             SelectVersion::Version(version) => eyre!("version {0} has not been downloaded; use `ag-gen unicode fetch.rs {0}`", version),
             SelectVersion::Latest => eyre!("the latest version has not been downloaded; use `ag-gen unicode fetch.rs` to get it"),
             SelectVersion::Draft => eyre!("the draft version has not been downloaded; use `ag-gen unicode fetch.rs draft` to get it"),

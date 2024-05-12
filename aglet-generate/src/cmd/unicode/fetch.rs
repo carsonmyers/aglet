@@ -2,12 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use console::style;
 use eyre::eyre;
 use tokio::fs;
 
-use crate::cache::{Cache, HashFiles, HashPhase, StoredVersionTag};
+use crate::cache::{Cache, HashFiles, HashPhase, StoredVersionTag, REMOTE_LISTING_TTL};
 use crate::cmd::unicode::CommonArgs;
-use crate::ftp::{self, new_pool, RemoteVersionTag};
+use crate::ftp::{self, new_pool};
 use crate::progress::{self, phase};
 use crate::unicode::SelectVersion;
 
@@ -32,6 +33,14 @@ pub async fn run(args: FetchArgs, cache: &mut Cache) -> eyre::Result<()> {
 }
 
 async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::Result<()> {
+    if let SelectVersion::Hash(_) = args.common.version {
+        let text = format!(
+            "Cannot fetch remote UCD version by hash: use a version like `Latest` or `15` instead"
+        );
+        eprintln!("{}", style(text).bright().red());
+        return Ok(());
+    }
+
     let pool = Arc::new(new_pool(args.common.max_connections));
     let progress = progress::Manager::new();
 
@@ -40,14 +49,15 @@ async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::
     let options = ftp::ListVersionOptions::new().with_pool(pool.clone());
     let list_versions = ftp::ListVersions::new(options);
     progress.phase(phase("Resolving version..."))?;
-    let versions = list_versions.list_versions().await?;
-    let version = versions
+    let remote_listing = cache
+        .metadata
+        .remote_listing
+        .get_or_replace(REMOTE_LISTING_TTL, list_versions.list_versions())
+        .await?;
+
+    let version = remote_listing
         .into_iter()
-        .find(|version| match args.common.version {
-            SelectVersion::Version(v) => version.version == v,
-            SelectVersion::Latest => matches!(version.tag, Some(RemoteVersionTag::Latest)),
-            SelectVersion::Draft => matches!(version.tag, Some(RemoteVersionTag::Draft)),
-        })
+        .find(|&version| version.selected_by(&args.common.version))
         .ok_or_else(|| eyre!("no version found matching {}", args.common.version))?
         .version;
 

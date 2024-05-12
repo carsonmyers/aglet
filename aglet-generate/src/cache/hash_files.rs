@@ -10,8 +10,8 @@ use crate::progress::stats::ImmediateStats;
 pub struct HashFiles {
     base_path: Arc<PathBuf>,
     filenames: Vec<PathBuf>,
-    hashes: HashMap<PathBuf, String>,
-    stats: Arc<ImmediateStats>,
+    hashes:    HashMap<PathBuf, String>,
+    stats:     Arc<ImmediateStats>,
 }
 
 impl HashFiles {

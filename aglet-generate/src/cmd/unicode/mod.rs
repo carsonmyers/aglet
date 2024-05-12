@@ -2,6 +2,7 @@ mod fetch;
 mod generate;
 mod list;
 mod show;
+mod use_version;
 
 use std::str::FromStr;
 
@@ -20,6 +21,7 @@ impl UnicodeArgs {
     pub fn common_args(&self) -> &CommonArgs {
         match &self.command {
             Commands::Show(args) => args,
+            Commands::Use(args) => args,
             Commands::List(args) => &args.common,
             Commands::Fetch(args) => &args.common,
             Commands::Generate(args) => &args.common,
@@ -40,6 +42,8 @@ pub struct CommonArgs {
 enum Commands {
     #[command(name = "show")]
     Show(CommonArgs),
+    #[command(name = "use")]
+    Use(CommonArgs),
     #[command(name = "list")]
     List(list::ListArgs),
     #[command(name = "fetch")]
@@ -51,6 +55,7 @@ enum Commands {
 pub async fn run(args: UnicodeArgs, cache: &mut Cache) -> eyre::Result<()> {
     match args.command {
         Commands::Show(args) => show::run(args, cache).await?,
+        Commands::Use(args) => use_version::run(args, cache).await?,
         Commands::List(args) => list::run(args, cache).await?,
         Commands::Fetch(args) => fetch::run(args, cache).await?,
         Commands::Generate(args) => generate::run(args, cache).await?,
