@@ -22,13 +22,14 @@ impl Download {
     pub fn new(files: RecursiveFiles, options: DownloadOptions) -> Self {
         let pool = options.get_pool().unwrap_or_else(|| Arc::new(new_pool(1)));
         let local = options.take_local();
+        let stats = ImmediateStats::from_totals(files.len(), files.size());
         let num_slots = pool.status().max_size;
 
         Self {
             files,
             local,
             pool,
-            stats: Arc::new(ImmediateStats::new()),
+            stats: Arc::new(stats),
             slots: Arc::new(StatsSlots::new(num_slots)),
         }
     }
@@ -56,11 +57,6 @@ impl Download {
             let local = local.join(file.relative_segments().join("/"));
             let remote = file.path.join("/");
 
-            debug!(
-                "download file {}",
-                remote
-            );
-
             let pool = self.pool.clone();
             let stats = self.stats.clone();
             let slots = self.slots.clone();
@@ -73,13 +69,17 @@ impl Download {
                 let (file_stats, slot) = slots
                     .insert(ImmediateFileStats::new(&remote, file.size))
                     .await?;
-                debug!("inserted slot {} for {}", slot, &remote);
+
+                debug!(
+                    "download {} -> {} ({} bytes)",
+                    remote,
+                    local.display(),
+                    file.size
+                );
 
                 // download the file and release the slot regardless of whether the download succeeded
                 let dl_res = download_file(stats, file_stats, &mut ftp, &remote, &local).await;
                 let rl_res = slots.release(slot).await;
-
-                debug!("released slot {} for {}", slot, &remote);
 
                 // preferentially return the download error
                 dl_res.and(rl_res)?;
@@ -87,7 +87,13 @@ impl Download {
                 Ok(local)
             });
         }
-        Ok(vec![])
+
+        let mut files = Vec::new();
+        while let Some(res) = join_set.join_next().await {
+            files.push(res??);
+        }
+
+        Ok(files)
     }
 }
 
@@ -98,12 +104,12 @@ pub async fn download_file(
     remote: &str,
     local: &Path,
 ) -> eyre::Result<()> {
-    ftp.retr(remote.as_ref(), move |reader| {
+    ftp.retr(remote, move |reader| {
         let stats = stats.clone();
         let file_stats = file_stats.clone();
         let local = local.to_path_buf();
 
-        let res = async {
+        async move {
             let file = tokio::fs::File::create(local)
                 .await
                 .map_err(FtpError::ConnectionError)?;
@@ -113,9 +119,7 @@ pub async fn download_file(
                 .map_err(FtpError::ConnectionError)?;
 
             Ok::<_, FtpError>(())
-        };
-
-        res
+        }
     })
     .await?;
 

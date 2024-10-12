@@ -1,3 +1,4 @@
+use crate::progress::phase::{phase, Phase};
 use chrono::{DateTime, Utc};
 use console::style;
 use indicatif::{MultiProgress, ProgressBar};
@@ -5,23 +6,39 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
+use tracing::debug;
 
-use crate::progress::phase::{phase, Phase};
+pub struct ManagerOptions {
+    suppress: bool,
+}
+
+impl ManagerOptions {
+    pub fn new() -> Self {
+        Self { suppress: false }
+    }
+
+    pub fn suppress(mut self, suppress: bool) -> Self {
+        self.suppress = suppress;
+        self
+    }
+}
 
 pub struct Manager {
+    options: ManagerOptions,
     start_time: DateTime<Utc>,
-    tx:         UnboundedSender<Message>,
-    handle:     Option<JoinHandle<()>>,
+    tx: UnboundedSender<Message>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl Manager {
-    pub fn new() -> Self {
+    pub fn new(options: ManagerOptions) -> Self {
         let start_time = Utc::now();
 
         let (tx, rx) = mpsc::unbounded_channel::<Message>();
         let handle = Some(tokio::spawn(run_progress(rx)));
 
         Self {
+            options,
             start_time,
             tx,
             handle,
@@ -29,6 +46,10 @@ impl Manager {
     }
 
     pub fn phase(&self, phase: Box<dyn Phase>) -> eyre::Result<()> {
+        if self.options.suppress {
+            return Ok(());
+        }
+
         self.tx.send(Message::NewPhase(phase))?;
         Ok(())
     }
@@ -42,6 +63,10 @@ impl Manager {
         let Some(handle) = self.handle.take() else {
             return Ok(());
         };
+
+        if self.options.suppress {
+            return Ok(());
+        }
 
         let end_time = Utc::now();
         self.tx.send(Message::Finish(end_time - self.start_time))?;
@@ -103,7 +128,7 @@ async fn run_progress(mut rx: UnboundedReceiver<Message>) {
 
 struct ProgressState {
     phase: Option<Box<dyn Phase>>,
-    bars:  Vec<ProgressBar>,
+    bars: Vec<ProgressBar>,
     group: MultiProgress,
 }
 
@@ -111,7 +136,7 @@ impl ProgressState {
     fn new() -> Self {
         Self {
             phase: None,
-            bars:  Vec::new(),
+            bars: Vec::new(),
             group: MultiProgress::new(),
         }
     }
@@ -160,9 +185,12 @@ impl ProgressState {
             if let Some(percent) = phase.update_percent(i) {
                 bar.set_position(percent.0);
                 bar.set_length(percent.1);
+            } else {
+                // the bar ticks by itself if the position is updated, so a manual tick is needed
+                // for phases without progress updates (but it should be omitted otherwise to not
+                // double-speed tick bars _with_ progress updates)
+                bar.tick();
             }
-
-            bar.tick();
         }
     }
 

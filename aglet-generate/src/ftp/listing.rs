@@ -43,6 +43,10 @@ impl RecursiveFiles {
     pub fn len(&self) -> usize {
         self.files.len()
     }
+
+    pub fn size(&self) -> usize {
+        self.files.iter().map(|file| file.size).sum()
+    }
 }
 
 impl Iterator for RecursiveFiles {
@@ -99,6 +103,10 @@ impl<T: Borrow<RemoteFile>> ListingFile<T> {
     pub fn relative_parent_segments(&self) -> &[String] {
         let path = &self.remote_file.borrow().path;
         &path[self.root_len..path.len() - 1]
+    }
+
+    pub fn size(&self) -> usize {
+        self.remote_file.borrow().size
     }
 }
 

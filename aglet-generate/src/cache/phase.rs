@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::cache::HashFiles;
 use crate::progress;
@@ -20,10 +20,6 @@ impl HashPhase {
 }
 
 impl progress::Phase for HashPhase {
-    fn init(&self) -> Vec<ProgressBar> {
-        vec![ProgressBar::new_spinner()]
-    }
-
     fn update_msg(&self, _index: usize) -> Option<String> {
         Some(format!("Hashing files...\t{}", self.stats.files_progress()))
     }

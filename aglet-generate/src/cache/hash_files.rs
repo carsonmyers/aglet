@@ -10,8 +10,8 @@ use crate::progress::stats::ImmediateStats;
 pub struct HashFiles {
     base_path: Arc<PathBuf>,
     filenames: Vec<PathBuf>,
-    hashes:    HashMap<PathBuf, String>,
-    stats:     Arc<ImmediateStats>,
+    hashes: HashMap<PathBuf, String>,
+    stats: Arc<ImmediateStats>,
 }
 
 impl HashFiles {
@@ -55,7 +55,7 @@ impl HashFiles {
             .hashes
             .iter()
             .sorted_by_key(|&(filename, _)| filename)
-            .map(|(filename, digest)| format!("{}\t{}", filename.display(), digest))
+            .map(|(filename, digest)| format!("{} {}", digest, filename.display()))
             .collect::<Vec<_>>()
             .join("\n");
 

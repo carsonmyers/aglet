@@ -28,7 +28,8 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
     let mut version_map = HashMap::new();
     if args.remote {
         let pool = Arc::new(new_pool(args.common.max_connections));
-        let progress = progress::Manager::new();
+        let options = progress::ManagerOptions::new().suppress(args.common.quiet);
+        let progress = progress::Manager::new(options);
 
         progress.phase(phase("Listing versions from unicode.org..."))?;
         let options = ftp::ListVersionOptions::new().with_pool(pool);
@@ -147,9 +148,9 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
 }
 
 struct VersionListing<'a> {
-    version:    UnicodeVersion,
+    version: UnicodeVersion,
     remote_tag: Option<RemoteVersionTag>,
-    cached:     Vec<&'a StoredVersion>,
+    cached: Vec<&'a StoredVersion>,
 }
 
 impl<'a> VersionListing<'a> {
@@ -163,9 +164,9 @@ impl<'a> VersionListing<'a> {
 
     fn from_remote_version(version: RemoteVersion) -> Self {
         Self {
-            version:    version.version,
+            version: version.version,
             remote_tag: version.tag,
-            cached:     Vec::new(),
+            cached: Vec::new(),
         }
     }
 }

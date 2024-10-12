@@ -21,11 +21,14 @@ pub struct UnicodeArgs {
 pub struct CommonArgs {
     /// Select version by tag (e.g. Latest, Draft), version name (e.g. 15.1), or hash
     #[arg(value_parser = parse_select_version)]
-    version: Option<SelectVersion>,
+    pub version: Option<SelectVersion>,
 
     /// Max number of FTP connections to use for fetching remote data
     #[arg(long, short = 'C', default_value = "5")]
     pub max_connections: usize,
+
+    #[arg(short, long)]
+    pub quiet: bool,
 }
 
 #[derive(Subcommand, Debug)]

@@ -14,6 +14,10 @@ pub struct FilesProgress(pub u64, pub u64);
 
 impl Display for FilesProgress {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.0 > self.1 {
+            panic!("invalid progress: completed {} > total {}", self.0, self.1)
+        }
+
         write!(
             f,
             "{}/{} files ({} remaining)",

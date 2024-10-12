@@ -230,12 +230,6 @@ impl VersionConstructor for SelectVersion {
         SelectVersion::Version(UnicodeVersion(maj, min, update))
     }
 }
-//
-// impl VersionConstructor for &UnicodeVersion {
-//     fn version(maj: u8, min: u8, update: u8) -> Self {
-//         &UnicodeVersion(maj, min, update)
-//     }
-// }
 
 pub fn construct_version<T: VersionConstructor>(maj: u8, min: u8, update: u8) -> T {
     T::version(maj, min, update)

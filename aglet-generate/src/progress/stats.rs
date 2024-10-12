@@ -11,9 +11,9 @@ const SAMPLE_COUNT: usize = 16;
 
 #[derive(Default, Debug)]
 pub struct ImmediateStats {
-    files_tx:  AtomicUsize,
+    files_tx: AtomicUsize,
     files_tot: AtomicUsize,
-    bytes_tx:  AtomicUsize,
+    bytes_tx: AtomicUsize,
     bytes_tot: AtomicUsize,
 }
 
@@ -66,8 +66,8 @@ impl ImmediateStats {
 
 #[derive(Default)]
 pub struct ImmediateFileStats {
-    filename:  String,
-    bytes_tx:  AtomicUsize,
+    filename: String,
+    bytes_tx: AtomicUsize,
     bytes_tot: AtomicUsize,
 }
 
@@ -102,19 +102,19 @@ impl ImmediateFileStats {
 }
 
 pub struct TransientStats {
-    last_measure:    time::Instant,
-    samples:         [usize; SAMPLE_COUNT],
+    last_measure: time::Instant,
+    samples: [usize; SAMPLE_COUNT],
     next_sample_idx: usize,
-    last_tx:         usize,
+    last_tx: usize,
 }
 
 impl TransientStats {
     pub fn new() -> Self {
         Self {
-            last_measure:    time::Instant::now(),
-            samples:         [0usize; SAMPLE_COUNT],
+            last_measure: time::Instant::now(),
+            samples: [0usize; SAMPLE_COUNT],
             next_sample_idx: 0,
-            last_tx:         0,
+            last_tx: 0,
         }
     }
 
@@ -154,14 +154,14 @@ impl TransientStats {
 
 pub struct StatsSlots<T> {
     slots: RwLock<Vec<Option<Arc<T>>>>,
-    len:   usize,
+    len: usize,
 }
 
 impl<T> StatsSlots<T> {
     pub fn new(slots: usize) -> Self {
         Self {
             slots: RwLock::new(vec![None; slots]),
-            len:   slots,
+            len: slots,
         }
     }
 
@@ -194,20 +194,20 @@ impl<T> StatsSlots<T> {
         self.len
     }
 
-    pub async fn get(&self, idx: usize) -> eyre::Result<Arc<T>> {
+    pub async fn get(&self, idx: usize) -> eyre::Result<Option<Arc<T>>> {
         let slots = self.slots.read().await;
         Self::get_inner(&slots, idx)
     }
 
-    pub fn try_get(&self, idx: usize) -> eyre::Result<Arc<T>> {
+    pub fn try_get(&self, idx: usize) -> eyre::Result<Option<Arc<T>>> {
         let slots = self.slots.try_read()?;
         Self::get_inner(&slots, idx)
     }
 
-    fn get_inner(slots: &Vec<Option<Arc<T>>>, idx: usize) -> eyre::Result<Arc<T>> {
+    fn get_inner(slots: &[Option<Arc<T>>], idx: usize) -> eyre::Result<Option<Arc<T>>> {
         match slots.get(idx) {
-            Some(Some(item)) => Ok(item.clone()),
-            Some(None) => Err(eyre!("slot {} is not populated", idx)),
+            Some(Some(item)) => Ok(Some(item.clone())),
+            Some(None) => Ok(None),
             None => Err(eyre!("invalid slot index {}", idx)),
         }
     }

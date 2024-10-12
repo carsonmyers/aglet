@@ -1,25 +1,25 @@
 use std::sync::Arc;
 
-use indicatif::{ProgressBar, ProgressStyle};
-
 use super::Download;
+use crate::progress;
 use crate::progress::data::PercentComplete;
 use crate::progress::{stats, Phase};
+use indicatif::{ProgressBar, ProgressStyle};
 
 const PROGRESS_TEMPLATE: &str = "[{elapsed_precise}] {wide_bar:.cyan/blue} {percent_precise}%";
 const FILE_TEMPLATE: &str = "{spinner} {wide_msg} {bytes}/{total_bytes} {percent}%";
 
 pub struct DownloadProgress {
-    stats:     Arc<stats::ImmediateStats>,
-    slots:     Arc<stats::StatsSlots<stats::ImmediateFileStats>>,
+    stats: Arc<stats::ImmediateStats>,
+    slots: Arc<stats::StatsSlots<stats::ImmediateFileStats>>,
     transient: stats::TransientStats,
 }
 
 impl DownloadProgress {
     pub fn new(download: &Download) -> Self {
         Self {
-            stats:     download.stats(),
-            slots:     download.slots(),
+            stats: download.stats(),
+            slots: download.slots(),
             transient: stats::TransientStats::new(),
         }
     }
@@ -37,32 +37,36 @@ impl DownloadProgress {
         )
     }
 
-    fn file_msg(&self, slot: usize) -> String {
+    fn file_msg(&self, slot: usize) -> Option<String> {
         self.slots
             .try_get(slot)
-            .expect("valid slot index")
-            .filename()
-            .to_string()
+            .expect("valid slot")
+            .map(|slot| slot.filename().to_string())
     }
 
-    fn file_percent(&self, slot: usize) -> PercentComplete {
+    fn file_percent(&self, slot: usize) -> Option<PercentComplete> {
         self.slots
             .try_get(slot)
-            .expect("valid slot index")
-            .percent_complete()
+            .expect("valid slot")
+            .map(|slot| slot.percent_complete())
     }
 }
 
 impl Phase for DownloadProgress {
     fn init(&self) -> Vec<ProgressBar> {
-        let status = ProgressBar::new_spinner();
+        let style = ProgressStyle::default_spinner().tick_chars(progress::SPINNER_SCAN_LONG);
+        let status = ProgressBar::new_spinner().with_style(style);
 
-        let style = ProgressStyle::with_template(PROGRESS_TEMPLATE).expect("valid progress style");
+        let style = ProgressStyle::with_template(PROGRESS_TEMPLATE)
+            .expect("valid progress style")
+            .tick_chars(progress::SPINNER_SCAN);
         let progress = ProgressBar::new(0).with_style(style);
 
         let mut bars = vec![status, progress];
 
-        let style = ProgressStyle::with_template(FILE_TEMPLATE).expect("valid file progress style");
+        let style = ProgressStyle::with_template(FILE_TEMPLATE)
+            .expect("valid file progress style")
+            .tick_chars(progress::SPINNER_SCAN);
         for _ in 0..self.slots.len() {
             bars.push(ProgressBar::new_spinner().with_style(style.clone()))
         }
@@ -78,7 +82,7 @@ impl Phase for DownloadProgress {
         match index {
             0 => Some(self.status_msg()),
             1 => None,
-            i => Some(self.file_msg(i - 2)),
+            i => self.file_msg(i - 2),
         }
     }
 
@@ -86,7 +90,7 @@ impl Phase for DownloadProgress {
         match index {
             0 => Some(self.stats.percent_complete()),
             1 => Some(self.stats.percent_complete()),
-            i => Some(self.file_percent(i - 2)),
+            i => self.file_percent(i - 2),
         }
     }
 

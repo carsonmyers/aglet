@@ -1,9 +1,12 @@
-use indicatif::ProgressBar;
-
+use crate::progress;
 use crate::progress::data;
+use indicatif::{ProgressBar, ProgressStyle};
 
 pub trait Phase: Send + Sync {
-    fn init(&self) -> Vec<ProgressBar>;
+    fn init(&self) -> Vec<ProgressBar> {
+        let style = ProgressStyle::default_spinner().tick_chars(progress::SPINNER_SCAN);
+        vec![ProgressBar::new_spinner().with_style(style)]
+    }
 
     fn tick(&mut self) {}
 
@@ -30,7 +33,10 @@ impl SimplePhase {
 
 impl Phase for SimplePhase {
     fn init(&self) -> Vec<ProgressBar> {
-        vec![ProgressBar::new_spinner().with_message(self.0.clone())]
+        let style = ProgressStyle::default_spinner().tick_chars(progress::SPINNER_SCAN);
+        vec![ProgressBar::new_spinner()
+            .with_style(style)
+            .with_message(self.0.clone())]
     }
 
     fn finish(&self) -> Option<String> {

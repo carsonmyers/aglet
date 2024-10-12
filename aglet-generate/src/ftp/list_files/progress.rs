@@ -1,9 +1,9 @@
-use std::sync::Arc;
-
-use indicatif::ProgressBar;
-
 use super::ListFiles;
+use crate::progress;
 use crate::progress::{stats, Phase};
+use color_eyre::owo_colors::OwoColorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::Arc;
 
 pub struct ListProgress {
     stats: Arc<stats::ImmediateStats>,
@@ -22,10 +22,6 @@ impl ListProgress {
 }
 
 impl Phase for ListProgress {
-    fn init(&self) -> Vec<ProgressBar> {
-        vec![ProgressBar::new_spinner()]
-    }
-
     fn update_msg(&self, _index: usize) -> Option<String> {
         Some(format!(
             "Listing files...\t{}\t{}",
