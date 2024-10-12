@@ -9,7 +9,7 @@ use crate::progress::data;
 
 const SAMPLE_COUNT: usize = 16;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ImmediateStats {
     files_tx:  AtomicUsize,
     files_tot: AtomicUsize,

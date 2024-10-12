@@ -49,15 +49,16 @@ impl Download {
             None => current_dir()?,
         };
 
+        debug!("start download to {}", local.display());
+
         for file in self.files {
             let parent = local.join(file.relative_parent_segments().join("/"));
             let local = local.join(file.relative_segments().join("/"));
             let remote = file.path.join("/");
 
             debug!(
-                "file: parent={} local={}",
-                parent.display(),
-                local.display()
+                "download file {}",
+                remote
             );
 
             let pool = self.pool.clone();
@@ -72,10 +73,13 @@ impl Download {
                 let (file_stats, slot) = slots
                     .insert(ImmediateFileStats::new(&remote, file.size))
                     .await?;
+                debug!("inserted slot {} for {}", slot, &remote);
 
                 // download the file and release the slot regardless of whether the download succeeded
                 let dl_res = download_file(stats, file_stats, &mut ftp, &remote, &local).await;
                 let rl_res = slots.release(slot).await;
+
+                debug!("released slot {} for {}", slot, &remote);
 
                 // preferentially return the download error
                 dl_res.and(rl_res)?;

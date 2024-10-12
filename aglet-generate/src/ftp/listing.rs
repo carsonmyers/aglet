@@ -7,7 +7,6 @@ use crate::parse;
 use eyre::eyre;
 use eyre::WrapErr;
 use nom::Parser;
-use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct RecursiveFiles {
@@ -40,6 +39,10 @@ impl RecursiveFiles {
 
         Ok(Self { root, files })
     }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
 }
 
 impl Iterator for RecursiveFiles {
@@ -48,8 +51,6 @@ impl Iterator for RecursiveFiles {
     fn next(&mut self) -> Option<Self::Item> {
         let remote_file = self.files.pop_front()?;
         let root_len = self.root.len();
-
-        debug!("file: {} {}", remote_file.path.join("/"), root_len);
 
         Some(ListingFile {
             root_len,
