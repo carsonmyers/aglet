@@ -32,7 +32,11 @@ pub async fn run(args: FetchArgs, cache: &mut Cache) -> eyre::Result<()> {
     res
 }
 
-async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::Result<()> {
+pub(crate) async fn run_inner(
+    args: FetchArgs,
+    cache: &mut Cache,
+    local: PathBuf,
+) -> eyre::Result<()> {
     if let Some(SelectVersion::Hash(_)) = args.common.version {
         let text =
             "Cannot fetch remote UCD version by hash: use a version like `Latest` or `15` instead";
@@ -64,7 +68,12 @@ async fn run_inner(args: FetchArgs, cache: &mut Cache, local: PathBuf) -> eyre::
         .version;
 
     // get a listing of remote files to be downloaded for the selected version
-    let remote = version.remote_dir();
+    let remote = version.remote_dir().ok_or_else(|| {
+        eyre!(
+            "could not determine the remote path for version {}",
+            version
+        )
+    })?;
     let options = ftp::ListOptions::new()
         .with_pool(pool.clone())
         .exclude_ext("zip")

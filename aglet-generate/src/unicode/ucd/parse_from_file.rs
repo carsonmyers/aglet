@@ -7,15 +7,15 @@ use crate::parse;
 use crate::unicode::UnicodeVersion;
 
 pub trait ParseFromFile: Sized {
-    fn filename(base_path: &Path, version: &UnicodeVersion) -> eyre::Result<PathBuf>;
-    fn parse<'a, 'b>(input: &'a str, version: &'b UnicodeVersion) -> parse::Result<'a, Self>;
+    fn filename(version: UnicodeVersion) -> eyre::Result<(UnicodeVersion, PathBuf)>;
+    fn parse(input: &str, version: UnicodeVersion) -> parse::Result<Self>;
 }
 
 pub trait LoadFromFile: ParseFromFile {
-    async fn load(base_path: &Path, version: &UnicodeVersion) -> eyre::Result<Self> {
-        let filename = Self::filename(base_path, version)?;
+    async fn load(filename: PathBuf, version: UnicodeVersion) -> eyre::Result<Self> {
         let data = fs::read_to_string(&filename).await?;
 
-        parse::finish(Self::parse(&data, version)).wrap_err("failed to parse ucd file")
+        parse::finish(Self::parse(&data, version))
+            .wrap_err_with(|| format!("failed to parse ucd file {}", filename.display()))
     }
 }

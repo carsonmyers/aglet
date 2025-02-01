@@ -1,4 +1,4 @@
 pub mod ucd;
-mod version;
+pub mod version;
 
 pub use version::*;

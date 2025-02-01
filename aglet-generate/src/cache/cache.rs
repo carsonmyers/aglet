@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Duration;
 use eyre::eyre;
+use itertools::Itertools;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::fs;
 use tracing::{error, info};
@@ -16,14 +17,19 @@ pub const REMOTE_LISTING_TTL: Duration = Duration::days(15);
 
 #[derive(Debug)]
 pub struct Cache {
-    path:         PathBuf,
+    path: PathBuf,
+    data_path: PathBuf,
     pub metadata: Metadata,
 }
 
 impl Cache {
     pub fn new<P: Into<PathBuf>>(path: P) -> Self {
+        let path = path.into();
+        let data_path = path.join("data");
+
         Self {
-            path:     path.into(),
+            path,
+            data_path,
             metadata: Default::default(),
         }
     }
@@ -108,20 +114,29 @@ impl Cache {
             .collect()
     }
 
-    pub fn version_or_default(
-        &self,
-        select: &Option<SelectVersion>,
-    ) -> eyre::Result<Option<&StoredVersion>> {
-        let Some(select) = select else {
-            return self.default_version();
-        };
-
-        let target_version = self.version(select)?;
-
-        Ok(Some(target_version))
+    pub fn has_version_or_default(&self, version: Option<&SelectVersion>) -> bool {
+        match version {
+            Some(version) => self.has_version(version),
+            None => self.has_default_version(),
+        }
     }
 
-    pub fn version(&self, select: &SelectVersion) -> eyre::Result<&StoredVersion> {
+    pub fn version_or_default(&self, select: &Option<SelectVersion>) -> Option<&StoredVersion> {
+        match select {
+            Some(select) => self.version(select),
+            None => self.default_version(),
+        }
+    }
+
+    pub fn has_version(&self, version: &SelectVersion) -> bool {
+        self.metadata
+            .stored_versions
+            .iter()
+            .find_position(|stored| stored.selected_by(version))
+            .is_some()
+    }
+
+    pub fn version(&self, select: &SelectVersion) -> Option<&StoredVersion> {
         let mut candidate_versions = self
             .metadata
             .stored_versions
@@ -129,26 +144,33 @@ impl Cache {
             .filter(|version| version.selected_by(select))
             .collect::<Vec<_>>();
 
-        let target_version = candidate_versions.pop();
-        let Some(target_version) = target_version else {
-            return Err(eyre!("no stored version matching {}", select));
-        };
-
-        Ok(target_version)
+        candidate_versions.pop()
     }
 
-    pub fn default_version(&self) -> eyre::Result<Option<&StoredVersion>> {
-        let Some(select) = self.metadata.use_version.as_ref() else {
-            let target_version =
+    pub fn has_default_version(&self) -> bool {
+        match self.metadata.use_version.as_ref() {
+            Some(version) => self.has_version(version),
+            None => self
+                .metadata
+                .stored_versions
+                .iter()
+                .rev()
+                .find_position(|version| {
+                    version.is_valid() && version.is_current() && !version.is_draft()
+                })
+                .is_some(),
+        }
+    }
+
+    pub fn default_version(&self) -> Option<&StoredVersion> {
+        match self.metadata.use_version.as_ref() {
+            Some(select) => self.version(select),
+            None => {
                 self.metadata.stored_versions.iter().rev().find(|version| {
                     version.is_valid() && version.is_current() && !version.is_draft()
-                });
-            return Ok(target_version);
-        };
-
-        let target_version = self.version(select)?;
-
-        Ok(Some(target_version))
+                })
+            },
+        }
     }
 
     pub fn version_path(&self, version: &StoredVersion) -> eyre::Result<PathBuf> {

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eyre::eyre;
 use nom::Parser;
 
 use super::{LoadFromFile, ParseFromFile};
-use crate::parse;
-use crate::unicode::{ver, UnicodeVersion};
+use crate::unicode::UnicodeVersion;
+use crate::{parse, ver};
 
 #[derive(Debug)]
 pub struct PropertyNames {
@@ -24,17 +24,22 @@ impl PropertyNames {
 }
 
 impl ParseFromFile for PropertyNames {
-    fn filename(base_path: &Path, version: &UnicodeVersion) -> eyre::Result<PathBuf> {
+    fn filename(version: UnicodeVersion) -> eyre::Result<(UnicodeVersion, PathBuf)> {
         if version < ver!(3, 2) {
             return Err(eyre!(
                 "property name aliases are not published before version 3.2.0"
             ));
         }
 
-        Ok(base_path.join(version.filename("PropertyAliases")))
+        version.filename("PropertyAliases").ok_or_else(|| {
+            eyre!(
+                "no property name aliases filename could be determined for version {}",
+                version
+            )
+        })
     }
 
-    fn parse<'a>(input: &'a str, _: &UnicodeVersion) -> parse::Result<'a, Self> {
+    fn parse(input: &str, _: UnicodeVersion) -> parse::Result<Self> {
         use nom::combinator::{all_consuming, map};
         use parse::ucd::{many1_values, name, ucd_lines};
 
@@ -91,10 +96,14 @@ mod tests {
         Name    ; Another_Name  ; Name_again";
 
         let res = PropertyNames::parse(input, ver!());
+        let res = parse::finish(res);
+        if let Err(e) = &res {
+            eprintln!("{e}");
+        }
+
         assert!(res.is_ok());
 
-        let (input, names) = res.unwrap();
-        assert_eq!(input, "");
+        let names = res.unwrap();
         assert_eq!(names.aliases.len(), 9);
         assert_eq!(names.aliases.get("name1").unwrap().as_str(), "name1");
         assert_eq!(names.aliases.get("name2").unwrap().as_str(), "name1");

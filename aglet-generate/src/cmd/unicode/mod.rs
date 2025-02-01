@@ -27,6 +27,9 @@ pub struct CommonArgs {
     #[arg(long, short = 'C', default_value = "5")]
     pub max_connections: usize,
 
+    #[arg(long)]
+    pub no_cache: bool,
+
     #[arg(short, long)]
     pub quiet: bool,
 }

@@ -1,12 +1,12 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use eyre::{eyre, OptionExt};
-use tokio::task::JoinHandle;
-
 use crate::ftp::list_versions::ListVersionOptions;
 use crate::ftp::{new_pool, Entry, Pool, RemoteVersion};
-use crate::unicode::UnicodeVersion;
+use crate::unicode::{UnicodeVersion, UnicodeVersionWithUpdate};
+use eyre::{eyre, OptionExt};
+use tokio::task::JoinHandle;
+use tracing::{error, info};
 
 pub struct ListVersions {
     pool: Arc<Pool>,
@@ -34,7 +34,12 @@ impl ListVersions {
             let mut versions = entries
                 .into_iter()
                 .filter_map(Entry::directory)
-                .filter_map(|dir| UnicodeVersion::from_str(&dir.name).ok())
+                .inspect(|dir| info!("UCD entry: {}", dir.name))
+                .filter_map(|dir| {
+                    UnicodeVersion::from_str(&dir.name)
+                        .inspect_err(|err| error!("invalid unicode version: {}", err))
+                        .ok()
+                })
                 .collect::<Vec<_>>();
 
             versions.sort();

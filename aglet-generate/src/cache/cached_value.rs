@@ -18,24 +18,36 @@ pub enum CachedValue<T> {
 pub struct CachedData<T> {
     #[serde(with = "toml_datetime_compat")]
     pub expires_at: DateTime<Utc>,
-    pub value:      T,
+    pub value: T,
 }
 
 impl<T> CachedValue<T> {
     pub async fn get_or_replace<F, E>(
         &mut self,
         ttl: chrono::Duration,
-        replacer: F,
+        resolver: F,
     ) -> Result<&T, E>
     where
         F: Future<Output = Result<T, E>>,
     {
         if !self.is_valid() {
             *self = Self::Cached(CachedData {
-                value:      replacer.await?,
+                value: resolver.await?,
                 expires_at: Utc::now() + ttl,
             });
         }
+
+        Ok(self.valid().unwrap())
+    }
+
+    pub async fn cache_result<F, E>(&mut self, ttl: chrono::Duration, resolver: F) -> Result<&T, E>
+    where
+        F: Future<Output = Result<T, E>>,
+    {
+        *self = Self::Cached(CachedData {
+            value: resolver.await?,
+            expires_at: Utc::now() + ttl,
+        });
 
         Ok(self.valid().unwrap())
     }

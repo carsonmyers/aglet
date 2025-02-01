@@ -10,7 +10,7 @@ pub async fn run(args: CommonArgs, cache: &mut Cache) -> eyre::Result<()> {
         return Ok(());
     };
 
-    let Ok(target_version) = cache.version(&select) else {
+    let Some(target_version) = cache.version(&select) else {
         let text = format!(
             "No stored versions match {0}\nuse `ag-gen unicode fetch {0}` to download it",
             select

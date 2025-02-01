@@ -34,11 +34,13 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
         progress.phase(phase("Listing versions from unicode.org..."))?;
         let options = ftp::ListVersionOptions::new().with_pool(pool);
         let list_versions = ftp::ListVersions::new(options);
-        let remote_listing = cache
-            .metadata
-            .remote_listing
-            .get_or_replace(REMOTE_LISTING_TTL, list_versions.list_versions())
-            .await?;
+        let cached = &mut cache.metadata.remote_listing;
+        let resolver = list_versions.list_versions();
+        let remote_listing = if args.common.no_cache {
+            cached.cache_result(REMOTE_LISTING_TTL, resolver).await?
+        } else {
+            cached.get_or_replace(REMOTE_LISTING_TTL, resolver).await?
+        };
 
         for &version in remote_listing {
             version_map.insert(
@@ -94,12 +96,7 @@ pub async fn run(args: ListArgs, cache: &mut Cache) -> eyre::Result<()> {
         );
     }
 
-    let current_version = cache.default_version().or_else(|err| {
-        let text = format!("error reading current version: {}", err);
-        eprintln!("{}", style(text).yellow());
-
-        <Result<_, eyre::Report>>::Ok(None)
-    })?;
+    let current_version = cache.default_version();
 
     for version in version_map.keys().sorted() {
         let listing = version_map.get(version).expect("version should be present");
