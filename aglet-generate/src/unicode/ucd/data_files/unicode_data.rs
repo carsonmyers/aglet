@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{LoadFromFile, ParseFromFile};
+use crate::unicode::ucd::{LoadFromFile, ParseFromFile};
 use crate::parse;
 use crate::unicode::UnicodeVersion;
 use aglet_text::{CharGroup, CharRange};
@@ -40,10 +40,10 @@ impl ParseFromFile for UnicodeData {
     fn parse(input: &str, _: UnicodeVersion) -> parse::Result<Self> {
         use nom::combinator::{all_consuming, map, opt};
         use parse::ucd::{codepoint, name, ucd_lines, value};
-
-        // range; name; gc; <rest...>
+        
+        // range; name; gc; <others>; upper; lower; title
         // 001C;<control>;Cc;0;B;;;;;N;INFORMATION SEPARATOR FOUR;;;;
-        let line_parser = (
+        let fields = (
             codepoint,      // single code-point: ranges are specified differently in UnicodeData.txt
             value,          // Name
             name,           // General_Category
@@ -60,41 +60,38 @@ impl ParseFromFile for UnicodeData {
             opt(codepoint), // Simple_Lowercase_Mapping
             opt(codepoint), // Simple_Titlecase_Mapping
         );
+        
+        let mut unicode_data = Self::new();
+        let line_parser = |(cp, _, gc, _, _, _, _, _, _, _, _, _, upper, lower, title)| {
+            // the surrogate codepoints are encoded in UnicodeData.txt, but are invalid
+            // codepoints and so will fail to be constructed into a CharRange. Just skip them
+            let Ok(range) = CharRange::try_from(cp) else {
+                return;
+            };
 
-        all_consuming(map(ucd_lines(line_parser), |entries| {
-            let mut res = Self::new();
-
-            for (cp, _, gc, _, _, _, _, _, _, _, _, _, upper, lower, title) in entries {
-                // the surrogate codepoints are encoded in UnicodeData.txt, but are invalid
-                // codepoints and so will fail to be constructed into a CharRange. Just skip them
-                let Ok(range) = CharRange::try_from(cp) else {
-                    continue;
-                };
-
-                if let Some(group) = res.general_category.get_mut(gc) {
-                    group.add_range(range)
-                } else {
-                    let mut group = CharGroup::new();
-                    group.add_range(range);
-                    res.general_category.insert(gc.to_string(), group);
-                }
-
-                if let Some(upper) = upper {
-                    res.simple_uppercase_mapping.insert(cp, upper);
-                }
-                if let Some(lower) = lower {
-                    res.simple_lowercase_mapping.insert(cp, lower);
-                }
-                if let Some(title) = title {
-                    res.simple_titlecase_mapping.insert(cp, title);
-                } else if let Some(upper) = upper {
-                    res.simple_titlecase_mapping.insert(cp, upper);
-                }
+            if let Some(group) = unicode_data.general_category.get_mut(gc) {
+                group.add_range(range)
+            } else {
+                let mut group = CharGroup::new();
+                group.add_range(range);
+                unicode_data.general_category.insert(gc.to_string(), group);
             }
 
-            res
-        }))
-        .parse(input)
+            if let Some(upper) = upper {
+                unicode_data.simple_uppercase_mapping.insert(cp, upper);
+            }
+            if let Some(lower) = lower {
+                unicode_data.simple_lowercase_mapping.insert(cp, lower);
+            }
+            if let Some(title) = title {
+                unicode_data.simple_titlecase_mapping.insert(cp, title);
+            } else if let Some(upper) = upper {
+                unicode_data.simple_titlecase_mapping.insert(cp, upper);
+            }
+        };
+        
+        let (i, _) = ucd_lines(fields, line_parser).parse(input)?;
+        Ok((i, unicode_data))
     }
 }
 

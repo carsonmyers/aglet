@@ -13,7 +13,8 @@ pub trait ParseFromFile: Sized {
 
 pub trait LoadFromFile: ParseFromFile {
     async fn load(filename: PathBuf, version: UnicodeVersion) -> eyre::Result<Self> {
-        let data = fs::read_to_string(&filename).await?;
+        let data = fs::read_to_string(&filename).await
+            .wrap_err_with(|| format!("error reading ucd file {} for version {}", filename.display(), version))?;
 
         parse::finish(Self::parse(&data, version))
             .wrap_err_with(|| format!("failed to parse ucd file {}", filename.display()))

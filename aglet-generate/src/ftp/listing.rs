@@ -329,7 +329,5 @@ mod tests {
             (space0, month, space0, digit1, space0, alt((time, digit1))),
         );
          */
-
-        dbg!(Directory::parse(line));
     }
 }

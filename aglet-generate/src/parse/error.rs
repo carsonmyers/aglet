@@ -15,9 +15,27 @@ pub struct Error<'a> {
 }
 
 impl<'a> Error<'a> {
+    pub fn codepoint(input: &'a str) -> Self {
+        Self {
+            errors: vec![(input, ErrorKind::Codepoint)],
+        }
+    }
+    
     pub fn range(input: &'a str) -> Self {
         Self {
             errors: vec![(input, ErrorKind::Range)],
+        }
+    }
+    
+    pub fn incomplete_value(input: &'a str) -> Self {
+        Self {
+            errors: vec![(input, ErrorKind::IncompleteValue)],
+        }
+    }
+    
+    pub fn incomplete_line(input: &'a str) -> Self {
+        Self {
+            errors: vec![(input, ErrorKind::IncompleteLine)],
         }
     }
 
@@ -58,6 +76,7 @@ impl<'a> FromExternalError<&'a str, AgletTextError> for Error<'a> {
     fn from_external_error(input: &'a str, _: nom::error::ErrorKind, e: AgletTextError) -> Self {
         let kind = match e {
             AgletTextError::UnsupportedUnicodeContext(_) => ErrorKind::UnicodeContext,
+            AgletTextError::InvalidCodepoint(_) => ErrorKind::Codepoint,
             _ => ErrorKind::Unknown,
         };
 
@@ -96,6 +115,8 @@ pub enum ErrorKind {
     Codepoint,
     UnicodeContext,
     Ucd(UcdParseError),
+    IncompleteValue,
+    IncompleteLine,
     Unknown,
 }
 

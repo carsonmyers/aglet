@@ -6,7 +6,7 @@ use aglet_text::UnicodeContext;
 use eyre::eyre;
 use nom::Parser;
 
-use super::{LoadFromFile, ParseFromFile};
+use crate::unicode::ucd::{LoadFromFile, ParseFromFile};
 use crate::parse;
 use crate::unicode::UnicodeVersion;
 
@@ -99,35 +99,31 @@ impl ParseFromFile for SpecialCasing {
     }
 
     fn parse(input: &str, _: UnicodeVersion) -> parse::Result<Self> {
-        use nom::combinator::{all_consuming, map, opt};
+        use nom::combinator::opt;
         use parse::ucd::{codepoint, codepoints, condition_list, ucd_lines};
-
-        let line_parser = (
+        
+        let fields = (
             codepoint,
             opt(codepoints),
             opt(codepoints),
             opt(codepoints),
             opt(condition_list),
         );
+        
+        let mut casing = Self::new();
+        let line_parser = |(code, lowercase, uppercase, titlecase, conditions)| {
+            let conditions = conditions
+                .map(|(locale, contexts)| Conditions {
+                    locale: locale.map(|l| l.to_string()),
+                    contexts,
+                })
+                .unwrap_or_default();
 
-        all_consuming(map(ucd_lines(line_parser), |entries| {
-            let mut casing = Self::new();
-            for entry in entries {
-                let (code, lowercase, uppercase, titlecase, conditions) = entry;
-
-                let conditions = conditions
-                    .map(|(locale, contexts)| Conditions {
-                        locale: locale.map(|l| l.to_string()),
-                        contexts,
-                    })
-                    .unwrap_or_default();
-
-                casing.insert_mapping(code, lowercase, uppercase, titlecase, conditions);
-            }
-
-            casing
-        }))
-        .parse(input)
+            casing.insert_mapping(code, lowercase, uppercase, titlecase, conditions);
+        };
+        
+        let (i, _) = ucd_lines(fields, line_parser).parse(input)?;
+        Ok((i, casing))
     }
 }
 

@@ -11,7 +11,7 @@
 
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
-use std::ops::{Add, AddAssign, Deref, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Deref, RangeInclusive, Sub, SubAssign};
 use std::slice::Iter;
 
 use crate::error::Error;
@@ -33,6 +33,15 @@ impl CharRange {
     #[inline]
     pub fn contains(&self, c: &char) -> bool {
         &self.0 <= c && c <= &self.1
+    }
+}
+
+impl IntoIterator for CharRange {
+    type Item = char;
+    type IntoIter = RangeInclusive<char>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (self.0..=self.1).into_iter()
     }
 }
 

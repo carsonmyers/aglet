@@ -23,7 +23,6 @@ pub struct GenerateArgs {
 }
 
 pub async fn run(args: GenerateArgs, cache: &mut Cache) -> eyre::Result<()> {
-    let version_or_latest = args.common.version.clone().unwrap_or(SelectVersion::Latest);
     if !cache.has_version_or_default(args.common.version.as_ref()) {
         let select_version = args.common.version.clone().unwrap_or(SelectVersion::Latest);
         download_missing(&args, select_version, None, cache).await?;
@@ -63,8 +62,14 @@ pub async fn run(args: GenerateArgs, cache: &mut Cache) -> eyre::Result<()> {
     //   - Property Values (PropertyValueAliases.txt)
     //   - Property Value Aliases (PropertyValueAliases.txt)
 
-    // Property names, values, and aliases:
+    // PropertyAliases.txt:
+    // - Property Names (meta)
+    // - Property Name Aliases (meta)
     let property_names = load_data::<ucd::PropertyNames>(&args, version, cache).await?;
+    
+    // PropertyValueAliases.txt:
+    // - Property Values (meta)
+    // - Property Value Aliases (meta)
     let property_values = load_data::<ucd::PropertyValues>(&args, version, cache).await?;
 
     // UnicodeData.txt:
@@ -73,6 +78,29 @@ pub async fn run(args: GenerateArgs, cache: &mut Cache) -> eyre::Result<()> {
     // - Simple_Lowercase_Mapping (string)
     // - Simple_Titlecase_Mapping (string)
     let unicode_data = load_data::<ucd::UnicodeData>(&args, version, cache).await?;
+    
+    // Blocks.txt
+    // - Block (catalog)
+    let blocks = load_data::<ucd::Blocks>(&args, version, cache).await?;
+    
+    // Scripts.txt
+    // - Script (catalog)
+    let scripts = load_data::<ucd::Scripts>(&args, version, cache).await?;
+    
+    // ScriptExtensions.txt
+    // - Script extensions (catalog)
+    
+    // DerivedCoreProperties.txt
+    // - Derived Properties (binary)
+    let derived_core_properties = load_data::<ucd::DerivedCoreProperties>(&args, version, cache).await?;
+    
+    // PropList.txt
+    // - Properties (binary)
+    let prop_list = load_data::<ucd::PropList>(&args, version, cache).await?;
+    
+    // emoji-data.txt
+    // - Emoji properties (binary)
+    let emoji_data = load_data::<ucd::EmojiData>(&args, version, cache).await?;
 
     // CaseFolding.txt:
     // - Simple_Case_Folding (string)
@@ -84,6 +112,11 @@ pub async fn run(args: GenerateArgs, cache: &mut Cache) -> eyre::Result<()> {
     // - Lowercase_Mapping (string)
     // - Titlecase_Mapping (string)
     let special_casing = load_data::<ucd::SpecialCasing>(&args, version, cache).await?;
+    
+    // DerivedNormalizationProps.txt
+    // - NFKC_Casefold (string)
+    // - NFKC_Simple_Casefold (string)
+    let derived_normalization_props = load_data::<ucd::DerivedNormalizationProps>(&args, version, cache).await?;
 
     Ok(())
 }

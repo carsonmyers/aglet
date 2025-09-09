@@ -1,31 +1,43 @@
+use std::fmt::Debug;
 use std::str::FromStr;
 
 use aglet_text::{CharRange, UnicodeContext, UnicodeContextKind};
 use nom::Parser;
 use paste::paste;
 use seq_macro::seq;
-
+use tracing::warn;
 use crate::parse::{Error, Result};
+
+fn ucd_delimiter(input: &str) -> Result<()> {
+    use nom::bytes::complete::tag;
+    use nom::combinator::value;
+    use nom::sequence::delimited;
+
+    use super::spaces;
+
+    value((), delimited(spaces, tag(";"), spaces)).parse(input)
+}
 
 pub fn comment(input: &str) -> Result<()> {
     use nom::branch::alt;
-    use nom::bytes::complete::tag;
+    use nom::bytes::complete::{tag, take_while};
     use nom::character::complete::line_ending;
-    use nom::combinator::{eof, value};
+    use nom::combinator::{consumed, eof, map, value};
     use nom::sequence::{delimited, preceded, terminated};
 
-    use super::{rest_of_line, spaces, spaces1};
+    use super::{context, spaces, spaces1};
 
-    alt((
-        terminated(value((), spaces1), eof),
-        terminated(value((), spaces), line_ending),
-        delimited(
+    let mut parser = alt((
+        context("spaces eof", terminated(value((), spaces1), eof)),
+        context("spaces nl", terminated(value((), spaces), line_ending)),
+        context("spaces comment", delimited(
             spaces,
-            value((), preceded(tag("#"), rest_of_line)),
+            value((), preceded(tag("#"), take_while(|c| c != '\n'))),
             alt((line_ending, eof)),
-        ),
-    ))
-    .parse(input)
+        )),
+    ));
+    
+    parser.parse(input)
 }
 
 pub fn name(input: &str) -> Result<&str> {
@@ -47,31 +59,45 @@ pub fn name(input: &str) -> Result<&str> {
 }
 
 pub fn value(input: &str) -> Result<&str> {
-    use nom::bytes::complete::take_while1;
+    use nom::bytes::complete::take_while;
     use nom::combinator::map;
     use nom::AsChar;
 
     map(
-        take_while1(|c: char| !c.is_newline() && c != ';' && c != '#'),
+        take_while(|c: char| !c.is_newline() && c != ';' && c != '#'),
         |val: &str| val.trim(),
     )
     .parse(input)
 }
 
-pub fn char_range(input: &str) -> Result<CharRange> {
+pub fn codepoint_range(input: &str) -> Result<(u32, Option<u32>)> {
     use nom::bytes::complete::tag;
     use nom::combinator::opt;
-    use nom::sequence::preceded;
 
-    let (next_input, codepoints) = (codepoint, opt(preceded(tag(".."), codepoint))).parse(input)?;
+    let (next_input, (start, range, end)) = (
+        codepoint,
+        opt(tag("..")),
+        opt(codepoint)
+    ).parse(input)?;
 
-    match codepoints.try_into() {
+    // ensure that an open range (e.g. `AB..`) is not accepted
+    if range.is_some() && end.is_none() {
+        return Err(nom::Err::Error(Error::range(input)))
+    }
+    
+    Ok((next_input, (start, end)))
+}
+
+pub fn char_range(input: &str) -> Result<CharRange> {
+    let (next_input, (start, end)) = codepoint_range(input)?;
+    
+    match (start, end).try_into() {
         Ok(range) => Ok((next_input, range)),
         Err(_) => Err(nom::Err::Error(Error::range(input))),
     }
 }
 
-pub fn codepoints<'a>(input: &'a str) -> Result<Vec<u32>> {
+pub fn codepoints(input: &str) -> Result<Vec<u32>> {
     use nom::multi::separated_list1;
 
     use super::spaces1;
@@ -79,14 +105,30 @@ pub fn codepoints<'a>(input: &'a str) -> Result<Vec<u32>> {
     separated_list1(spaces1, codepoint).parse(input)
 }
 
-pub fn codepoint<'a>(input: &'a str) -> Result<u32> {
+pub fn chars(input: &str) -> Result<Vec<char>> {
+    use nom::multi::separated_list1;
+    
+    use super::spaces1;
+    
+    separated_list1(spaces1, codepoint_char).parse(input)
+}
+
+pub fn codepoint(input: &str) -> Result<u32> {
     use nom::character::complete::hex_digit1;
     use nom::combinator::map_res;
 
-    map_res(hex_digit1, |hex: &'a str| u32::from_str_radix(hex, 16)).parse(input)
+    map_res(hex_digit1, |hex: &str| u32::from_str_radix(hex, 16)).parse(input)
 }
 
-pub fn language_tag<'a>(input: &'a str) -> Result<&'a str> {
+pub fn codepoint_char(input: &str) -> Result<char> {
+    use nom::combinator::map_res;
+
+    map_res(codepoint, |codepoint| char::from_u32(codepoint).ok_or_else(|| {
+        aglet_text::Error::InvalidCodepoint(codepoint)
+    })).parse(input)
+}
+
+pub fn language_tag(input: &str) -> Result<&str> {
     use nom::bytes::complete::take_while1;
     use nom::combinator::opt;
     use nom::sequence::terminated;
@@ -120,10 +162,9 @@ pub fn unicode_context(input: &str) -> Result<UnicodeContext> {
 
 pub fn condition_list(input: &str) -> Result<(Option<&str>, Vec<UnicodeContext>)> {
     use nom::branch::alt;
-    use nom::bytes::complete::tag;
     use nom::combinator::map;
     use nom::multi::{separated_list0, separated_list1};
-    use nom::sequence::{preceded, separated_pair, terminated};
+    use nom::sequence::separated_pair;
 
     use super::{context, spaces};
 
@@ -145,54 +186,29 @@ pub fn condition_list(input: &str) -> Result<(Option<&str>, Vec<UnicodeContext>)
     .parse(input)
 }
 
-pub fn many0_values<'a, F, T>(
-    mut parser: F,
-) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
-where
-    F: Parser<&'a str, Output = T, Error = Error<'a>>,
-{
-    use nom::bytes::complete::tag;
-    use nom::sequence::delimited;
+macro_rules! ucd_value(
+    ($ctx:expr, $parser:expr, $input:expr) => {{
+        use nom::{Input, AsChar, Err};
 
-    use super::spaces;
-
-    move |i: &'a str| {
-        let mut acc = Vec::with_capacity(4);
-        let mut next_input = i;
-        loop {
-            match parser.parse(next_input) {
-                Ok((i, o)) => {
-                    next_input = i;
-                    acc.push(o);
-                },
-                Err(_) => break,
+        use super::context_res;
+        
+        let (final_input, value_input) = $input.split_at_position_complete::<_, Error>(|c| {
+            c == ';' || c == '#' || c.is_newline()
+        })?;
+        
+        match context_res($ctx, $parser.parse(value_input.trim())) {
+            Ok((remaining, output)) if remaining.is_empty() => Ok((final_input, output)),
+            Ok((remaining, _)) => {
+                println!("incomplete value: {} / {}", $input, remaining);
+                Err(Err::Error::<Error>(Error::incomplete_value($input).append_context($ctx)))
             }
-
-            match delimited(spaces, tag(";"), spaces).parse(next_input) {
-                Ok((i, _)) => {
-                    next_input = i;
-                },
-                Err(_) => break,
-            }
+            err @ Err(_) => err,
         }
-
-        Ok((next_input, acc))
-    }
-}
-
-pub fn many1_values<'a, F, T>(parser: F) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
-where
-    F: Parser<&'a str, Output = T, Error = Error<'a>>,
-{
-    use nom::combinator::verify;
-
-    use super::context;
-
-    context(
-        "many1_values",
-        verify(many0_values(parser), |values: &Vec<T>| !values.is_empty()),
-    )
-}
+    }};
+    ($parser:expr, $input:expr) => (
+        ucd_value!("ucd value", $parser, $input)
+    );
+);
 
 pub trait UcdTupleParser<'a, T> {
     fn parse_ucd_tuple(&mut self, input: &'a str) -> Result<'a, T>;
@@ -209,10 +225,8 @@ where
     F: Parser<&'a str, Output = T, Error = Error<'a>>,
 {
     fn parse_ucd_tuple(&mut self, input: &'a str) -> Result<'a, (T,)> {
-        use super::context_res;
-
-        let (i, o) = context_res("ucd value 0", self.0.parse(input))?;
-        Ok((i, (o,)))
+        let (next_input, output) = ucd_value!("ucd value 0", self.0, input)?;
+        Ok((next_input, (output,)))
     }
 }
 
@@ -250,26 +264,25 @@ macro_rules! ucd_trait_impl(
             $($fun: nom::Parser<&'a str, Output = $out, Error = Error<'a>>),+
         {
             fn parse_ucd_tuple(&mut self, input: &'a str) -> Result<'a, ( $out1, $($out),+ )> {
-                use nom::sequence::delimited;
-                use nom::bytes::complete::tag;
-                use crate::parse::{context, context_res, spaces};
+                use nom::combinator::opt;
+
+                use super::context;
 
                 let mut next_input = input;
 
-                let (i, o) = context_res("ucd value 0", self.0.parse(next_input))?;
+                let (i, o) = ucd_value!("ucd value 0", self.0, next_input)?;
                 next_input = i;
 
                 let res = (o, $({
-                    let (i, _) = context(stringify!(ucd delimiter $id), delimited(spaces, tag(";"), spaces)).parse(next_input)?;
+                    let (i, _) = context(stringify!(ucd delimiter $id), opt(ucd_delimiter)).parse(next_input)?;
                     next_input = i;
 
-                    let (i, o) = context_res(stringify!(ucd value $id), self.$id.parse(next_input))?;
+                    let ctx = stringify!(ucd value $id);
+                    let (i, o) = ucd_value!(ctx, self.$id, next_input)?;
                     next_input = i;
 
                     o
                 }),+);
-                
-                
 
                 Ok((next_input, res))
             }
@@ -280,109 +293,224 @@ macro_rules! ucd_trait_impl(
 ucd_trait!();
 
 pub fn ucd_line<'a, T, List>(
-    mut parser: List,
+    parser: List,
 ) -> impl Parser<&'a str, Output = T, Error = Error<'a>>
 where
     List: UcdTupleParser<'a, T>,
 {
-    move |input: &'a str| parser.parse_ucd_tuple(input)
+    use nom::combinator::map;
+    
+    use super::empty;
+    
+    map(line(parser, empty), |(output, _)| output)
 }
 
-pub fn ucd_lines<'a, T, List>(
-    parser: List,
-) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+pub fn ucd_line_rest<'a, T, U, List, F>(
+    prefix_parser: List,
+    rest_parser: F,
+) -> impl Parser<&'a str, Output = (T, Vec<U>), Error = Error<'a>>
 where
     List: UcdTupleParser<'a, T>,
+    F: Parser<&'a str, Output = U, Error = Error<'a>>,
 {
-    use nom::multi::{many0_count, many1};
+    use nom::branch::alt;
+    use nom::bytes::complete::tag;
+    use nom::character::complete::line_ending;
+    use nom::combinator::{consumed, eof, map, value, verify, peek};
+    use nom::multi::many0;
     use nom::sequence::delimited;
-
+    
     use super::{context, spaces};
-
-    many1(delimited(
-        context(
-            "skip pre-comments and whitespace",
-            (many0_count(comment), spaces),
-        ),
-        context("ucd line", ucd_line(parser)),
-        context("skip post-comments", many0_count(comment)),
-    ))
-}
-
-struct UcdHelperOutput<T> {
-    value: T,
-    next_must_match_empty: bool,
-}
-
-impl<T> UcdHelperOutput<T> {
-    fn empty(value: T) -> Self {
-        Self {
-            value,
-            next_must_match_empty: true,
-        }
-    }
     
-    fn value(value: T) -> Self {
-        Self {
-            value,
-            next_must_match_empty: false,
-        }
-    }
+    let terminator = context(
+        "ucd value terminator", alt((
+            value(true, tag(";")),
+            value(false, eof),
+            value(false, peek(tag("#"))),
+            value(false, peek(line_ending)),
+        ))
+    );
+    
+    let value = context("ucd spaced value", delimited(spaces, consumed(rest_parser), spaces));
+    let segment = context("ucd segments", verify((
+        value,
+        terminator,
+    ), |((input, _), is_delimiter)| {
+        *is_delimiter || !input.is_empty()
+    }));
+    
+    let segments = context("ucd segments", many0(segment));
+    let filtered = map(segments, |segments| {
+        segments
+            .into_iter()
+            .filter_map(|((input, value), is_delimiter)| {
+                if !is_delimiter && input.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
+            })
+            .collect()
+        });
+
+    line(prefix_parser, filtered)
 }
 
-fn next_ucd_value_helper<'a, F, T>(
-    mut parser: F,
-    match_separator: bool,
-    must_match_empty: bool,
-) -> impl Parser<&'a str, Output = UcdHelperOutput<T>, Error = Error<'a>>
+fn line<'a, T, U, List, F>(
+    mut prefix_parser: List,
+    mut rest_parser: F,
+) -> impl Parser<&'a str, Output = (T, U), Error = Error<'a>>
 where
-    F: Parser<&'a str, Output = T, Error = Error<'a>>,
+    List: UcdTupleParser<'a, T>,
+    F: Parser<&'a str, Output = U, Error = Error<'a>>,
 {
-    use nom::bytes::complete::tag;
-    use nom::sequence::delimited;
+    use nom::{AsChar, Err};
+    use nom::combinator::{consumed, opt};
+    
+    use super::{context, context_res};
 
-    use super::spaces;
+    move |input: &'a str| {
+        // parse the ucd line prefix tuple
+        let (next_input, prefix) = context_res("line prefix tuple", prefix_parser.parse_ucd_tuple(input))?;
 
-    move |i: &'a str| {
-        let mut next_input = i;
+        // skip the next delimiter, if it exists
+        let (next_input, _) = context("line prefix delimiter", opt(ucd_delimiter)).parse(next_input)?;
         
-        if !must_match_empty && match_separator {
-            let separator_res = delimited(spaces, tag(";"), spaces).parse(next_input);
-        }
+        // collect the remaining fields
+        let (next_input, rest) = context_res("line suffix", rest_parser.parse(next_input))?;
         
-        if must_match_empty {
-            let (_, o) = parser.parse("")?;
-            return Ok((i, UcdHelperOutput::empty(o)));
+        // skip whitespace and comments at the end of the line
+        let (next_input, (remainder, _)) = consumed(opt(comment)).parse(next_input)?;
+        
+        // ensure the whole line was consumed. The comment parser must match a section of text which
+        // ends in a newline, unless it appeared at the end of the file. If it didn't match a
+        // newline, then the next input text must be empty
+        if !remainder.ends_with("\n") && !next_input.is_empty() {
+            return Err(Err::Error::<Error>(Error::incomplete_line(next_input)));
         }
 
-
-        if match_separator {
-            
-            let (i, _) = delimited(spaces, tag(";"), spaces).parse(next_input)?;
-            next_input = i;
-        }
-
-        let (i, o) = parser.parse(next_input)?;
-        next_input = i;
-
-        Ok((next_input, UcdHelperOutput::value(o)))
+        Ok((next_input, (prefix, rest)))
     }
 }
 
-fn ucd_separator<'a>() -> impl Parser<&'a str, Output = bool, Error = Error<'a>> {
-    use nom::bytes::complete::tag;
-    use nom::sequence::delimited;
-    use nom::combinator::{map, opt};
+pub fn ucd_lines<'a, P, L, F, T>(
+    parser: P,
+    f: F,
+) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+where
+    P: UcdTupleParser<'a, L>,
+    F: FnMut(L) -> T,
+{
+    lines(ucd_line(parser), |v| Ok(f(v)))
+}
+
+pub fn ucd_lines_err<'a, P, L, F, T>(
+    parser: P,
+    f: F,
+) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+where
+    P: UcdTupleParser<'a, L>,
+    F: FnMut(L) -> std::result::Result<T, Error<'a>>,
+{
+    lines(ucd_line(parser), f)
+}
+
+pub fn ucd_lines_rest<'a, P, L, R, A, F, T>(
+    prefix_parser: P,
+    rest_parser: R,
+    f: F,
+) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+where
+    P: UcdTupleParser<'a, L>,
+    R: Parser<&'a str, Output = A, Error = Error<'a>>,
+    F: FnMut((L, Vec<A>)) -> T,
+{
+    lines(ucd_line_rest(prefix_parser, rest_parser), |v| Ok(f(v)))
+}
+
+pub fn ucd_lines_rest_err<'a, P, L, R, A, F, T>(
+    prefix_parser: P,
+    rest_parser: R,
+    f: F,
+) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+where
+    P: UcdTupleParser<'a, L>,
+    R: Parser<&'a str, Output = A, Error = Error<'a>>,
+    F: FnMut((L, Vec<A>)) -> std::result::Result<T, Error<'a>>,
+{
+    lines(ucd_line_rest(prefix_parser, rest_parser), f)
+}
+
+fn lines<'a, P, L, F, T, E>(
+    mut parser: P,
+    f: F,
+) -> impl Parser<&'a str, Output = Vec<T>, Error = Error<'a>>
+where
+    P: Parser<&'a str, Output = L, Error = Error<'a>>,
+    F: FnMut(T) -> std::result::Result<T, Error<'a>>,
+{
+    use nom::multi::many0_count;
     
-    use super::spaces;
+    use super::{context, context_res};
     
-    map(opt(delimited(spaces, tag(";"), spaces)), |tag| tag.is_some())
+    move |input: &'a str| {
+        let mut next_input = input;
+        let mut lines = Vec::with_capacity(1024);
+        loop {
+            let (i, _) = context("skip comments", many0_count(comment)).parse(next_input)?;
+            next_input = i;
+            
+            if next_input.is_empty() {
+                break;
+            }
+            
+            let (i, line) = context_res("line parser", parser.parse(next_input))?;
+            next_input = i;
+            
+            let mapped = f(line)?;
+            lines.push(mapped);
+        }
+        
+        Ok((next_input, lines))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use nom::combinator::all_consuming;
+    use tracing::warn;
+
+    #[test]
+    fn test_comment() {
+        use nom::combinator::consumed;
+        
+        let input = [
+            "# hello world",
+            " # this is a comment\t ",
+            " ",
+            "",
+            " #end",
+        ].join("\n");
+
+        let (i, (text, _)) = consumed(comment).parse(&input).unwrap();
+        assert_eq!(text, "# hello world\n");
+        
+        let (i, (text, _)) = consumed(comment).parse(i).unwrap();
+        assert_eq!(text, " # this is a comment\t \n");
+
+        let (i, (text, _)) = consumed(comment).parse(i).unwrap();
+        assert_eq!(text, " \n");
+
+        let (i, (text, _)) = consumed(comment).parse(i).unwrap();
+        assert_eq!(text, "\n");
+        assert_eq!(i, " #end");
+
+        let (i, (text, _)) = consumed(comment).parse(i).unwrap();
+        assert_eq!(text, " #end");
+        
+        assert_eq!(i, "");
+    }
 
     #[test]
     fn test_name() {
@@ -463,8 +591,6 @@ mod tests {
 
     #[test]
     fn test_ucd_line() {
-        use nom::combinator::opt;
-
         let (_, (range, val1, val2)) = ucd_line((char_range, name, name))
             .parse("AB..C0 ; hello;\tworld")
             .unwrap();
@@ -474,61 +600,85 @@ mod tests {
         assert_eq!(val1, "hello");
         assert_eq!(val2, "world");
 
-        let (_, (val, rest)) = ucd_line((name, many1_values(name)))
-            .parse("hello;my;darling")
-            .unwrap();
+        let mut parser = ucd_line((name, name));
 
-        assert_eq!(val, "hello");
-        assert_eq!(rest.len(), 2);
-        assert_eq!(rest[0], "my");
-        assert_eq!(rest[1], "darling");
-
-        let mut parser = ucd_line((name, many0_values(opt(name))));
-
-        let (_, (val, rest)) = parser.parse("a;b").unwrap();
-        assert_eq!(val, "a");
-        assert_eq!(rest.len(), 1);
-        assert_eq!(rest[0], Some("b"));
-
-        let (_, (val, rest)) = parser.parse("a;b;c").unwrap();
-        assert_eq!(val, "a");
-        assert_eq!(rest.len(), 2);
-        assert_eq!(rest[0], Some("b"));
-        assert_eq!(rest[1], Some("c"));
-
-        let (_, (val, rest)) = parser.parse("a;;;").unwrap();
-        assert_eq!(val, "a");
-        assert_eq!(rest.len(), 3);
-        assert!(rest.iter().all(|val| val.is_none()));
-
-        let (_, (val, rest)) = parser.parse("a;hello;;world;;").unwrap();
-        assert_eq!(val, "a");
-        assert_eq!(rest.len(), 5);
-        assert_eq!(rest[0], Some("hello"));
-        assert!(rest[1].is_none());
-        assert_eq!(rest[2], Some("world"));
-        assert!(rest[3].is_none());
-        assert!(rest[4].is_none());
+        let (_, (name1, name2)) = parser.parse("a;b").unwrap();
+        assert_eq!(name1, "a");
+        assert_eq!(name2, "b");
+        
+        let res = parser.parse("a");
+        assert!(res.is_err());
+        
+        let res = parser.parse("a;b;c");
+        assert!(res.is_err());
     }
     
     #[test]
-    fn test_ucd_line_partial() {
-        let mut parser = ucd_line((name, name));
+    fn test_ucd_line_prefix() {
+        let mut parser = ucd_line_rest((char_range, name), value);
         
-        let (i, (val1, val2)) = parser.parse("a;b").unwrap();
-        assert_eq!(val1, "a");
-        assert_eq!(val2, "b");
-        assert_eq!(i, "");
+        let (_, ((range, val), rest)) = parser
+            .parse("AB..C0 ; hello ; world;; # comment")
+            .unwrap();
+        assert_eq!(range.start(), &'\u{AB}');
+        assert_eq!(range.end(), &'\u{C0}');
+        assert_eq!(val, "hello");
+        assert_eq!(rest, &["world", ""]);
         
-        let (i, (val1, val2)) = parser.parse("a;b;").unwrap();
-        assert_eq!(val1, "a");
-        assert_eq!(val2, "b");
-        assert_eq!(i, "");
+        let res = parser.parse("1;");
+        assert!(res.is_err());
         
-        let (i, (val1, val2)) = parser.parse("a;b;c").unwrap();
-        assert_eq!(val1, "a");
-        assert_eq!(val2, "b");
-        assert_eq!(i, "");
+        let (_, ((range, val), rest)) = parser
+            .parse("1;hello # comment")
+            .unwrap();
+        assert_eq!(range.start(), &'\u{1}');
+        assert_eq!(range.end(), &'\u{1}');
+        assert_eq!(val, "hello");
+        assert!(rest.is_empty());
+        
+        let mut parser = ucd_line_rest((name,), value);
+        
+        let (_, ((val,), rest)) = parser
+            .parse("abc")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert!(rest.is_empty());
+        
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello"]);
+
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello;")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello"]);
+
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello#")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello"]);
+
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello;;#")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello", ""]);
+
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello;;;#")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello", "", ""]);
+
+        let (_, ((val,), rest)) = parser
+            .parse("abc;hello;;;")
+            .unwrap();
+        assert_eq!(val, "abc");
+        assert_eq!(rest, &["hello", "", ""]);
     }
 
     #[test]
@@ -546,50 +696,42 @@ mod tests {
             "#################",
             "",
             "A0..AC;some_as;;;",
-            "B1..10B2\t;lots\t;\tand_lots   ;  AND_LOTS ;     # this one is big # so big",
-            "00..1A;just_some ; # hello!",
+            "B1..10B2\t;lots\t;\tand_lots   ;  AND_LOTS ;;many;     # this one is big # so big",
+            "00..1A;just_some;# hello!",
             "",
             " # and that's it",
         ]
         .join("\n");
 
-        let res = ucd_lines((char_range, name, many0_values(opt(name)))).parse(&input);
-        assert!(res.is_ok());
+        let mut parser = ucd_lines_rest((char_range, name), opt(name));
 
-        let (i, lines) = res.unwrap();
+        let (i, lines) = parser.parse(&input).unwrap();
         assert_eq!(i, "");
         assert_eq!(lines.len(), 4);
 
-        let (range, name, aliases) = &lines[0];
+        let ((range, val), aliases) = &lines[0];
         assert_eq!(range.start(), &'\u{1c}');
         assert_eq!(range.end(), &'\u{1c}');
-        assert_eq!(name, &"one_c");
-        assert_eq!(aliases.len(), 2);
-        assert_eq!(aliases[0], Some("C_1C"));
-        assert_eq!(aliases[1], Some("jim"));
+        assert_eq!(val, &"one_c");
+        assert_eq!(aliases, &[Some("C_1C"), Some("jim")]);
 
-        let (range, name, aliases) = &lines[1];
+        let ((range, val), aliases) = &lines[1];
         assert_eq!(range.start(), &'\u{a0}');
         assert_eq!(range.end(), &'\u{ac}');
-        assert_eq!(name, &"some_as");
-        assert_eq!(aliases.len(), 3);
-        assert!(aliases.iter().all(|alias| alias.is_none()));
+        assert_eq!(val, &"some_as");
+        assert_eq!(aliases, &[None, None]);
 
-        let (range, name, aliases) = &lines[2];
+        let ((range, val), aliases) = &lines[2];
         assert_eq!(range.start(), &'\u{b1}');
         assert_eq!(range.end(), &'\u{10B2}');
-        assert_eq!(name, &"lots");
-        assert_eq!(aliases.len(), 3);
-        assert_eq!(aliases[0], Some("and_lots"));
-        assert_eq!(aliases[1], Some("AND_LOTS"));
-        assert!(aliases[2].is_none());
+        assert_eq!(val, &"lots");
+        assert_eq!(aliases, &[Some("and_lots"), Some("AND_LOTS"), None, Some("many")]);
 
-        let (range, name, aliases) = &lines[3];
+        let ((range, val), aliases) = &lines[3];
         assert_eq!(range.start(), &'\u{0}');
         assert_eq!(range.end(), &'\u{1a}');
-        assert_eq!(name, &"just_some");
-        assert_eq!(aliases.len(), 1);
-        assert!(aliases[0].is_none());
+        assert_eq!(val, &"just_some");
+        assert!(aliases.is_empty());
 
         let unicode_data_samples = [
             "0000;<control>;Cc;0;BN;;;;;N;NULL;;;;",
@@ -599,36 +741,32 @@ mod tests {
         ]
         .join("\n");
 
-        let mut parser = all_consuming(ucd_lines((
+        let mut parser = ucd_lines_rest((
             codepoint,
             value,
-            crate::parse::ucd::name,
-            many0_values(opt(value)),
-        )));
+            name,
+        ), opt(value));
 
-        let res = parser.parse(&unicode_data_samples);
-        assert!(res.is_ok());
-
-        let (i, lines) = res.unwrap();
+        let (i, lines) = parser.parse(&unicode_data_samples).unwrap();
         assert_eq!(lines.len(), 4);
         assert_eq!(i, "");
 
-        let (cp, val, gc, _) = &lines[0];
+        let ((cp, val, gc), _) = &lines[0];
         assert_eq!(cp, &0x0);
         assert_eq!(val, &"<control>");
         assert_eq!(gc, &"Cc");
 
-        let (cp, val, gc, _) = &lines[1];
+        let ((cp, val, gc), _) = &lines[1];
         assert_eq!(cp, &0x41);
         assert_eq!(val, &"LATIN CAPITAL LETTER A");
         assert_eq!(gc, &"Lu");
 
-        let (cp, val, gc, _) = &lines[2];
+        let ((cp, val, gc), _) = &lines[2];
         assert_eq!(cp, &0xD7FB);
         assert_eq!(val, &"HANGUL JONGSEONG PHIEUPH-THIEUTH");
         assert_eq!(gc, &"Lo");
 
-        let (cp, val, gc, _) = &lines[3];
+        let ((cp, val, gc), _) = &lines[3];
         assert_eq!(cp, &0xD800);
         assert_eq!(val, &"<Non Private Use High Surrogate, First>");
         assert_eq!(gc, &"Cs");

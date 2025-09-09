@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use eyre::eyre;
 use nom::Parser;
 
-use super::{LoadFromFile, ParseFromFile};
+use crate::unicode::ucd::{LoadFromFile, ParseFromFile};
 use crate::unicode::UnicodeVersion;
 use crate::{parse, ver};
 
@@ -41,16 +41,15 @@ impl ParseFromFile for PropertyNames {
 
     fn parse(input: &str, _: UnicodeVersion) -> parse::Result<Self> {
         use nom::combinator::{all_consuming, map};
-        use parse::ucd::{many1_values, name, ucd_lines};
+        use parse::ucd::{name, ucd_lines_rest};
 
         // Name ; Alias
         // Name ; Alias ; Alias2
-        let line_parser = (name, many1_values(name));
-
-        all_consuming(map(ucd_lines(line_parser), |entries| {
+        let line_parser = ucd_lines_rest((name,), name);
+        all_consuming(map(line_parser, |entries| {
             let mut res = Self::new();
 
-            for (name, aliases) in entries {
+            for ((name,), aliases) in entries {
                 res.aliases.insert(name.to_string(), name.to_string());
                 for alias in &aliases {
                     res.aliases.insert(alias.to_string(), name.to_string());
@@ -76,13 +75,17 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        assert!(PropertyNames::parse("", ver!()).is_err());
+        let (_, props) = PropertyNames::parse("", ver!()).unwrap();
+        assert!(props.aliases.is_empty());
+        assert!(props.names.is_empty());
     }
 
     #[test]
     fn test_only_comment() {
         let input = "#hello world\n#this is a comment\n\n# more comment\n";
-        assert!(PropertyNames::parse(input, ver!()).is_err());
+        let (_, props) = PropertyNames::parse(input, ver!()).unwrap();
+        assert!(props.aliases.is_empty());
+        assert!(props.names.is_empty());
     }
 
     #[test]

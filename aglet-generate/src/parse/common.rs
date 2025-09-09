@@ -29,6 +29,10 @@ pub fn rest_of_line(input: &str) -> Result<&str> {
     input.split_at_position_complete(|c| c.is_newline())
 }
 
+pub fn empty(input: &str) -> Result<()> {
+    Ok((input, ()))
+}
+
 pub fn context<'a, F, T>(
     ctx: &'static str,
     mut parser: F,

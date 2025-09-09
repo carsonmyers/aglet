@@ -1,0 +1,23 @@
+mod blocks;
+mod case_folding;
+mod derived_core_properties;
+mod derived_normalization_props;
+mod emoji_data;
+mod prop_list;
+mod property_names;
+mod property_values;
+mod scripts;
+mod special_casing;
+mod unicode_data;
+
+pub use blocks::Blocks;
+pub use case_folding::CaseFolding;
+pub use derived_core_properties::DerivedCoreProperties;
+pub use derived_normalization_props::DerivedNormalizationProps;
+pub use emoji_data::EmojiData;
+pub use prop_list::PropList;
+pub use property_names::PropertyNames;
+pub use property_values::PropertyValues;
+pub use scripts::Scripts;
+pub use special_casing::SpecialCasing;
+pub use unicode_data::UnicodeData;
